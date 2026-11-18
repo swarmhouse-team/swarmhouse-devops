@@ -13,7 +13,8 @@ x-common: &common
 services:
   postgres:
     <<: *common
-    image: postgres:18.7-trixie
+    image: postgres:${POSTGRES_TAG:?Set POSTGRES_TAG in .env}
+    container_name: postgres
     env_file:
       - ./env/postgres.env
     environment:
@@ -53,7 +54,8 @@ services:
 
   redis:
     <<: *common
-    image: redis:8.10-trixie
+    image: redis:${REDIS_TAG:?Set REDIS_TAG in .env}
+    container_name: redis
     env_file:
       - ./env/redis.env
     cpus: 0.25

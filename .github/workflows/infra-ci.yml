@@ -1,0 +1,59 @@
+name: Infrastructure CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: infra-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate infrastructure
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Check Docker Compose
+        run: docker compose version
+
+      - name: Prepare test environment
+        run: |
+          set -euo pipefail
+
+          test -f compose.yaml
+          test -f .env.example
+          test -f env/postgres.env.example
+          test -f env/redis.env.example
+          test -f conf/postgres/postgresql.conf
+          test -f conf/redis/redis.conf
+
+          cp .env.example .env
+          cp env/postgres.env.example env/postgres.env
+          cp env/redis.env.example env/redis.env
+
+          mkdir -p data/postgres data/redis
+
+      - name: Validate Compose configuration
+        run: docker compose --env-file .env -f compose.yaml config --quiet
+
+      - name: Check image availability
+        run: docker compose --env-file .env -f compose.yaml pull
