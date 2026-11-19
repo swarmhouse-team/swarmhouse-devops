@@ -227,6 +227,7 @@ services:
   alloy-init:
     <<: *common
     image: grafana/alloy:${ALLOY_VERSION:?Set ALLOY_VERSION in .env}
+    container_name: alloy-init
     user: "0:0"
     restart: "no"
     network_mode: none
