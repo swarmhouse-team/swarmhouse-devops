@@ -16,6 +16,7 @@ services:
   prometheus:
     <<: *common
     image: prom/prometheus:${PROMETHEUS_VERSION:?Set PROMETHEUS_VERSION in .env}
+    container_name: prometheus
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
@@ -39,6 +40,7 @@ services:
   grafana:
     <<: *common
     image: grafana/grafana:${GRAFANA_VERSION:?Set GRAFANA_VERSION in .env}
+    container_name: grafana
     env_file:
       - ./env/grafana.env
     environment:
@@ -73,6 +75,7 @@ services:
   node-exporter:
     <<: *common
     image: prom/node-exporter:${NODE_EXPORTER_VERSION:?Set NODE_EXPORTER_VERSION in .env}
+    container_name: node-exporter
     command:
       - --path.procfs=/host/proc
       - --path.sysfs=/host/sys
@@ -102,6 +105,7 @@ services:
   postgres-exporter:
     <<: *common
     image: quay.io/prometheuscommunity/postgres-exporter:${POSTGRES_EXPORTER_VERSION:?Set POSTGRES_EXPORTER_VERSION in .env}
+    container_name: postgres-exporter
     command:
       - --datasource.uri=postgres:5432/swarmhouse_db?sslmode=disable
     env_file:
@@ -115,6 +119,7 @@ services:
   redis-exporter:
     <<: *common
     image: oliver006/redis_exporter:${REDIS_EXPORTER_VERSION:?Set REDIS_EXPORTER_VERSION in .env}
+    container_name: redis-exporter
     env_file:
       - ./env/redis-exporter.env
     environment:
@@ -127,6 +132,7 @@ services:
 
   cadvisor:
     image: ghcr.io/google/cadvisor:${CADVISOR_VERSION:?Set CADVISOR_VERSION in .env}
+    container_name: cadvisor
     restart: unless-stopped
     privileged: true
     devices:
@@ -171,6 +177,7 @@ services:
   loki:
     <<: *common
     image: grafana/loki:${LOKI_VERSION:?Set LOKI_VERSION in .env}
+    container_name: loki
     command:
       - -config.file=/etc/loki/config.yml
     cpus: 0.5
@@ -189,6 +196,7 @@ services:
   alloy:
     <<: *common
     image: grafana/alloy:${ALLOY_VERSION:?Set ALLOY_VERSION in .env}
+    container_name: alloy
     user: "0:0"
     command:
       - run
