@@ -97,6 +97,8 @@ services:
 
 networks:
   infra:
-    driver: bridge
+    external: true
+    name: infra
   monitoring:
-    driver: bridge
+    external: true
+    name: monitoring
