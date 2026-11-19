@@ -29,3 +29,10 @@ scrape_configs:
       - targets: ["redis-exporter:9121"]
         labels:
           server: swarmhous
+
+  - job_name: cadvisor
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["cadvisor:8080"]
+        labels:
+          server: swarmhous

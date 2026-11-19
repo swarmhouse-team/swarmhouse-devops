@@ -124,6 +124,50 @@ services:
     read_only: true
     networks:
       - monitoring
+
+  cadvisor:
+    image: ghcr.io/google/cadvisor:${CADVISOR_VERSION:?Set CADVISOR_VERSION in .env}
+    restart: unless-stopped
+    privileged: true
+    devices:
+      - /dev/kmsg
+    command:
+      - --docker_only=true
+      - --housekeeping_interval=15s
+      - --enable_load_reader=true
+    cpus: 0.25
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+    volumes:
+      - type: bind
+        source: /
+        target: /rootfs
+        read_only: true
+        bind:
+          propagation: rslave
+      - type: bind
+        source: /var/run
+        target: /var/run
+        read_only: true
+      - type: bind
+        source: /sys
+        target: /sys
+        read_only: true
+      - type: bind
+        source: /var/lib/docker
+        target: /var/lib/docker
+        read_only: true
+      - type: bind
+        source: /dev/disk
+        target: /dev/disk
+        read_only: true
+    networks:
+      - monitoring
+
   loki:
     <<: *common
     image: grafana/loki:${LOKI_VERSION:?Set LOKI_VERSION in .env}
