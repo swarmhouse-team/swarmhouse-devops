@@ -7,7 +7,7 @@ DB_NAME="swarmhouse_db"
 KEEP=5
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BACKUP_ROOT="${SCRIPT_DIR}/backup"
+BACKUP_ROOT="${SCRIPT_DIR}/../data/backup"
 STAMP="$(date +%Y-%m-%d_%H-%M-%S)"
 TARGET="${BACKUP_ROOT}/${STAMP}"
 TMP="${BACKUP_ROOT}/.tmp-${STAMP}"
