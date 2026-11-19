@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 # --- Настройки ---
 CONTAINER="postgres"
-DB_NAME="swarmhouse_db"
+DB_NAME="$(docker exec "$CONTAINER" sh -ec 'printf "%s" "${POSTGRES_DB:?POSTGRES_DB не задана}"')"
 KEEP=5
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
