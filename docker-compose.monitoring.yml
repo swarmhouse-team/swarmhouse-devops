@@ -1,0 +1,102 @@
+name: monitoring
+
+x-common: &common
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  prometheus:
+    <<: *common
+    image: prom/prometheus:${PROMETHEUS_VERSION:?Set PROMETHEUS_VERSION in .env}
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+    cpus: 0.5
+    mem_limit: 512m
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - type: bind
+        source: ./conf/prometheus/prometheus.yml
+        target: /etc/prometheus/prometheus.yml
+        read_only: true
+        bind:
+          create_host_path: false
+      - ./data/prometheus:/prometheus
+    networks:
+      - monitoring
+
+  grafana:
+    <<: *common
+    image: grafana/grafana:${GRAFANA_VERSION:?Set GRAFANA_VERSION in .env}
+    env_file:
+      - ./env/grafana.env
+    environment:
+      TZ: ${TZ:-UTC}
+    cpus: 0.5
+    mem_limit: 512m
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - type: bind
+        source: ./conf/grafana/grafana.ini
+        target: /etc/grafana/grafana.ini
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./conf/grafana/provisioning
+        target: /etc/grafana/provisioning
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./conf/grafana/dashboards
+        target: /etc/grafana/dashboards
+        read_only: true
+        bind:
+          create_host_path: false
+      - ./data/grafana:/var/lib/grafana
+    networks:
+      - monitoring
+      
+  node-exporter:
+    <<: *common
+    image: prom/node-exporter:${NODE_EXPORTER_VERSION:?Set NODE_EXPORTER_VERSION in .env}
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/host/root
+      - '--collector.filesystem.mount-points-exclude=^/(dev|proc|sys|var/lib/docker/.+|var/lib/containers/storage/.+)($$|/)'
+    cpus: 0.25
+    mem_limit: 128m
+    read_only: true
+    volumes:
+      - type: bind
+        source: /proc
+        target: /host/proc
+        read_only: true
+      - type: bind
+        source: /sys
+        target: /host/sys
+        read_only: true
+      - type: bind
+        source: /
+        target: /host/root
+        read_only: true
+        bind:
+          propagation: rslave
+    networks:
+      - monitoring
+networks:
+  monitoring:
+    driver: bridge
