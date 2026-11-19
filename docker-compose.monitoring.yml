@@ -68,7 +68,7 @@ services:
       - ./data/grafana:/var/lib/grafana
     networks:
       - monitoring
-      
+
   node-exporter:
     <<: *common
     image: prom/node-exporter:${NODE_EXPORTER_VERSION:?Set NODE_EXPORTER_VERSION in .env}
@@ -97,6 +97,33 @@ services:
           propagation: rslave
     networks:
       - monitoring
+
+  postgres-exporter:
+    <<: *common
+    image: quay.io/prometheuscommunity/postgres-exporter:${POSTGRES_EXPORTER_VERSION:?Set POSTGRES_EXPORTER_VERSION in .env}
+    command:
+      - --datasource.uri=postgres:5432/swarmhouse_db?sslmode=disable
+    env_file:
+      - ./env/postgres-exporter.env
+    cpus: 0.25
+    mem_limit: 128m
+    read_only: true
+    networks:
+      - monitoring
+
+  redis-exporter:
+    <<: *common
+    image: oliver006/redis_exporter:${REDIS_EXPORTER_VERSION:?Set REDIS_EXPORTER_VERSION in .env}
+    env_file:
+      - ./env/redis-exporter.env
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    cpus: 0.25
+    mem_limit: 128m
+    read_only: true
+    networks:
+      - monitoring
+
 networks:
   monitoring:
     driver: bridge

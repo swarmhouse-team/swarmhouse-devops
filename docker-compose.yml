@@ -51,6 +51,7 @@ services:
       start_period: 30s
     networks:
       - infra
+      - monitoring
 
   redis:
     <<: *common
@@ -92,8 +93,10 @@ services:
       start_period: 10s
     networks:
       - infra
+      - monitoring
 
 networks:
   infra:
-    name: infra
-    external: true
+    driver: bridge
+  monitoring:
+    driver: bridge
