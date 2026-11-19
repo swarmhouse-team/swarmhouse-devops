@@ -12,10 +12,10 @@ concurrency:
 
 jobs:
   deploy:
-    name: Deploy PostgreSQL and Redis
+    name: Deploy PostgreSQL, Redis and monitoring
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
 
     env:
       DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
@@ -103,7 +103,7 @@ jobs:
 
           git checkout --detach "$DEPLOY_SHA"
 
-          test -f compose.yaml
+          test -f docker-compose.yml
           test -s .env
           test -s env/postgres.env
           test -s env/redis.env
@@ -111,28 +111,72 @@ jobs:
           test -f conf/redis/redis.conf
           test -d data/postgres
           test -d data/redis
+          test -f docker-compose.monitoring.yml
+          test -s env/grafana.env
+          test -s env/postgres-exporter.env
+          test -s env/redis-exporter.env
+          test -f conf/prometheus/prometheus.yml
+          test -f conf/loki/config.yml
+          test -f conf/alloy/config.alloy
+          test -f conf/grafana/grafana.ini
+          test -d conf/grafana/dashboards
+          test -d data/prometheus
+          test -d data/grafana
 
           docker network inspect infra > /dev/null
+          docker network inspect monitoring > /dev/null
           docker compose version
-          docker compose -f compose.yaml config --quiet
+          docker compose -f docker-compose.yml config --quiet
+          docker compose -f docker-compose.monitoring.yml config --quiet
 
           # Download images before restarting any services.
-          docker compose -f compose.yaml pull postgres redis
+          docker compose -f docker-compose.yml pull postgres redis
 
           # Restart both services so bind-mounted config changes apply.
-          if ! docker compose -f compose.yaml up \
+          if ! docker compose -f docker-compose.yml up \
             -d \
             --force-recreate \
             --wait \
             --wait-timeout 120 \
             postgres redis; then
-            docker compose -f compose.yaml ps
+            docker compose -f docker-compose.yml ps
             echo "Deployment failed. Inspect logs directly on the server."
             echo "Previous commit: $PREVIOUS_SHA"
             exit 1
           fi
 
-          docker compose -f compose.yaml ps
+          docker compose -f docker-compose.yml ps
+
+          docker compose -f docker-compose.monitoring.yml pull
+
+          if ! docker compose -f docker-compose.monitoring.yml up \
+            -d \
+            --force-recreate; then
+            docker compose -f docker-compose.monitoring.yml ps
+            echo "Monitoring deployment failed. Inspect logs directly on the server."
+            echo "Previous commit: $PREVIOUS_SHA"
+            exit 1
+          fi
+
+          alloy_init_status="$(docker inspect --format '{{.State.Status}} {{.State.ExitCode}}' alloy-init)"
+          if [[ "$alloy_init_status" != "exited 0" ]]; then
+            echo "alloy-init did not exit 0: ${alloy_init_status}"
+            docker compose -f docker-compose.monitoring.yml ps
+            echo "Previous commit: $PREVIOUS_SHA"
+            exit 1
+          fi
+
+          for service in prometheus grafana loki alloy cadvisor node-exporter postgres-exporter redis-exporter; do
+            state="$(docker inspect --format '{{.State.Status}}' "$service")"
+            if [[ "$state" != "running" ]]; then
+              echo "${service} is ${state}"
+              docker compose -f docker-compose.monitoring.yml ps
+              echo "Previous commit: $PREVIOUS_SHA"
+              exit 1
+            fi
+          done
+
+          docker compose -f docker-compose.monitoring.yml ps
           echo "Deployment completed: $DEPLOY_SHA"
           REMOTE
 

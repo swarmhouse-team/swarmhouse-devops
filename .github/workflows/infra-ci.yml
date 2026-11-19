@@ -39,21 +39,35 @@ jobs:
         run: |
           set -euo pipefail
 
-          test -f compose.yaml
+          test -f docker-compose.yml
           test -f .env.example
           test -f env/postgres.env.example
           test -f env/redis.env.example
           test -f conf/postgres/postgresql.conf
           test -f conf/redis/redis.conf
+          test -f docker-compose.monitoring.yml
+          test -f conf/prometheus/prometheus.yml
+          test -f conf/loki/config.yml
+          test -f conf/alloy/config.alloy
+          test -f conf/grafana/grafana.ini
+          test -d conf/grafana/dashboards
+          test -f env/grafana.env.example
+          test -f env/postgres-exporter.env.example
+          test -f env/redis-exporter.env.example
 
           cp .env.example .env
           cp env/postgres.env.example env/postgres.env
           cp env/redis.env.example env/redis.env
+          cp env/grafana.env.example env/grafana.env
+          cp env/postgres-exporter.env.example env/postgres-exporter.env
+          cp env/redis-exporter.env.example env/redis-exporter.env
 
-          mkdir -p data/postgres data/redis
+          mkdir -p data/postgres data/redis data/prometheus data/grafana
 
       - name: Validate Compose configuration
-        run: docker compose --env-file .env -f compose.yaml config --quiet
+        run: |
+          docker compose --env-file .env -f docker-compose.yml config --quiet
+          docker compose --env-file .env -f docker-compose.monitoring.yml config --quiet
 
       - name: Check image availability
-        run: docker compose --env-file .env -f compose.yaml pull
+        run: docker compose --env-file .env -f docker-compose.yml pull
