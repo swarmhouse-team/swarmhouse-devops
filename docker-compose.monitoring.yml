@@ -45,6 +45,8 @@ services:
       - ./env/grafana.env
     environment:
       TZ: ${TZ:-UTC}
+      JIRA_API_TOKEN: "${JIRA_API_TOKEN:?Set JIRA_API_TOKEN in .env}"
+      JIRA_USER: "${JIRA_USER:?Set JIRA_USER in .env}"
     cpus: 0.5
     mem_limit: 512m
     ports:
@@ -69,6 +71,8 @@ services:
         bind:
           create_host_path: false
       - ./data/grafana:/var/lib/grafana
+      - ./conf/grafana/provisioning/alerting/contact-points.yaml:/etc/grafana/provisioning/alerting/contact-points.yaml
+      - ./conf/grafana/provisioning/alerting/resource-alerts.yaml:/etc/grafana/provisioning/alerting/resource-alerts.yaml
     networks:
       - monitoring
 
