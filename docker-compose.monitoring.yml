@@ -45,8 +45,6 @@ services:
       - ./env/grafana.env
     environment:
       TZ: ${TZ:-UTC}
-      JIRA_API_TOKEN: "${JIRA_API_TOKEN:?Set JIRA_API_TOKEN in .env}"
-      JIRA_USER: "${JIRA_USER:?Set JIRA_USER in .env}"
     cpus: 0.5
     mem_limit: 512m
     ports:
