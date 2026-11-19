@@ -200,7 +200,7 @@ services:
     user: "0:0"
     command:
       - run
-      - --storage.path=/var/lib/alloy/data
+      - --storage.path=/data/storage
       - /etc/alloy/config.alloy
     cpus: 0.25
     mem_limit: 256m
@@ -217,9 +217,28 @@ services:
         read_only: true
         bind:
           create_host_path: false
-      - alloy_data:/var/lib/alloy/data
+      - alloy_data:/data
     networks:
       - monitoring
+  alloy-init:
+    <<: *common
+    image: grafana/alloy:${ALLOY_VERSION:?Set ALLOY_VERSION in .env}
+    user: "0:0"
+    restart: "no"
+    network_mode: none
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        mkdir -p /data/storage
+        chown -R 0:0 /data
+        chmod u+rwx /data
+        chmod -R u+rwX /data/storage
+    volumes:
+      - alloy_data:/data
 volumes:
   loki_data:
   alloy_data:
