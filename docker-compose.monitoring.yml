@@ -9,7 +9,7 @@ x-common: &common
   logging:
     driver: json-file
     options:
-      max-size: "10m"
+      max-size: "100m"
       max-file: "3"
 
 services:
@@ -20,6 +20,7 @@ services:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=15d
+      - --storage.tsdb.retention.size=2GB
     cpus: 0.5
     mem_limit: 512m
     ports:
@@ -123,7 +124,53 @@ services:
     read_only: true
     networks:
       - monitoring
+  loki:
+    <<: *common
+    image: grafana/loki:${LOKI_VERSION:?Set LOKI_VERSION in .env}
+    command:
+      - -config.file=/etc/loki/config.yml
+    cpus: 0.5
+    mem_limit: 512m
+    volumes:
+      - type: bind
+        source: ./conf/loki/config.yml
+        target: /etc/loki/config.yml
+        read_only: true
+        bind:
+          create_host_path: false
+      - loki_data:/loki
+    networks:
+      - monitoring
 
+  alloy:
+    <<: *common
+    image: grafana/alloy:${ALLOY_VERSION:?Set ALLOY_VERSION in .env}
+    user: "0:0"
+    command:
+      - run
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    cpus: 0.25
+    mem_limit: 256m
+    volumes:
+      - type: bind
+        source: ./conf/alloy/config.alloy
+        target: /etc/alloy/config.alloy
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+        read_only: true
+        bind:
+          create_host_path: false
+      - alloy_data:/var/lib/alloy/data
+    networks:
+      - monitoring
+volumes:
+  loki_data:
+  alloy_data:
 networks:
   monitoring:
     external: true
