@@ -198,6 +198,9 @@ services:
     image: grafana/alloy:${ALLOY_VERSION:?Set ALLOY_VERSION in .env}
     container_name: alloy
     user: "0:0"
+    depends_on:
+      alloy-init:
+        condition: service_completed_successfully
     command:
       - run
       - --storage.path=/data/storage
@@ -220,6 +223,7 @@ services:
       - alloy_data:/data
     networks:
       - monitoring
+    
   alloy-init:
     <<: *common
     image: grafana/alloy:${ALLOY_VERSION:?Set ALLOY_VERSION in .env}
