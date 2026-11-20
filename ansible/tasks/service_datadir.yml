@@ -49,77 +49,18 @@
   ansible.builtin.set_fact:
     data_image_user: "{{ data_image_id.stdout | parse_posix_id }}"
 
-- name: "Проверить корень {{ data_mount.host }}"
-  ansible.builtin.stat:
-    path: "{{ devops_checkout }}/{{ data_mount.host }}"
-  register: data_dir_stat
+- name: "Повторно отказать, если {{ data_mount.host }} изменился до смены владельца"
+  ansible.builtin.include_tasks: tasks/datadir_kind.yml
+  vars:
+    data_root: "{{ data_mount.host }}"
 
-- name: "Остановить, если {{ data_mount.host }} не каталог"
-  ansible.builtin.fail:
-    msg: >-
-      {{ devops_checkout }}/{{ data_mount.host }} существует и это не каталог.
-      Не удаляю и владельца не меняю.
-  when:
-    - data_dir_stat.stat.exists
-    - (not data_dir_stat.stat.isdir) or (data_dir_stat.stat.islnk | bool)
-
-- name: "Решить, менять ли только корень {{ data_mount.host }}"
-  ansible.builtin.set_fact:
-    data_dir_plan: >-
-      {{
-        (data_dir_stat.stat.exists | bool) | postgres_dir_plan(
-          data_dir_stat.stat.uid | default(0),
-          data_dir_stat.stat.gid | default(0),
-          data_dir_stat.stat.mode | default(''),
-          data_image_user.uid,
-          data_image_user.gid
-        )
-      }}
-
-- name: "Создать корень {{ data_mount.host }} или выставить ему режим 0700"
-  ansible.builtin.file:
-    path: "{{ devops_checkout }}/{{ data_mount.host }}"
-    state: directory
-    mode: "0700"
-    recurse: false
-
-- name: "Назначить корень {{ data_mount.host }} пользователю из образа"
-  ansible.builtin.command:
-    argv:
-      - chown
-      - "{{ data_image_user.uid }}:{{ data_image_user.gid }}"
-      - "{{ devops_checkout }}/{{ data_mount.host }}"
-  when: data_dir_plan.chown | bool
-  changed_when: true
-
-- name: "Перечитать корень {{ data_mount.host }}"
-  ansible.builtin.stat:
-    path: "{{ devops_checkout }}/{{ data_mount.host }}"
-  register: data_dir_ready
-
-- name: "Сверить корень {{ data_mount.host }} с пользователем образа"
-  ansible.builtin.set_fact:
-    data_dir_after: >-
-      {{
-        (data_dir_ready.stat.exists | bool) | postgres_dir_plan(
-          data_dir_ready.stat.uid | default(0),
-          data_dir_ready.stat.gid | default(0),
-          data_dir_ready.stat.mode | default(''),
-          data_image_user.uid,
-          data_image_user.gid
-        )
-      }}
-
-- name: "Остановить, если корень {{ data_mount.host }} снова не принадлежит пользователю образа"
-  ansible.builtin.fail:
-    msg: >-
-      {{ devops_checkout }}/{{ data_mount.host }} принадлежит
-      {{ data_dir_ready.stat.uid | default('нет') }}:{{ data_dir_ready.stat.gid | default('нет') }},
-      режим {{ data_dir_ready.stat.mode | default('нет') }},
-      а образ {{ data_mount.image }} ожидает
-      {{ data_image_user.uid }}:{{ data_image_user.gid }} и 0700.
-      Содержимое каталога не менял.
-  when: data_dir_after.action != 'keep'
+- name: "Подготовить корень {{ data_mount.host }}"
+  ansible.builtin.include_tasks: tasks/datadir_root.yml
+  vars:
+    data_root: "{{ data_mount.host }}"
+    data_uid: "{{ data_image_user.uid }}"
+    data_gid: "{{ data_image_user.gid }}"
+    data_image: "{{ data_mount.image }}"
 
 - name: "Проверить запись пользователя образа в {{ data_mount.mount }}"
   ansible.builtin.command:

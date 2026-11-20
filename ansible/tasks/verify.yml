@@ -58,16 +58,31 @@
   loop_control:
     label: "{{ item.item.path }}"
 
-- name: Проверить, что публичный ключ есть у deploy
-  ansible.builtin.command:
-    argv:
-      - grep
-      - -F
-      - -q
-      - "{{ devops_actions_comment }}"
-      - "/home/{{ deploy_user }}/.ssh/authorized_keys"
-  changed_when: false
+- name: Прочитать authorized_keys пользователя deploy
+  ansible.builtin.slurp:
+    src: "/home/{{ deploy_user }}/.ssh/authorized_keys"
+  register: deploy_authorized_keys
   no_log: true
+  diff: false
+
+- name: Сравнить authorized_keys с локальным публичным ключом
+  ansible.builtin.set_fact:
+    deploy_actions_key_present: >-
+      {{
+        (deploy_authorized_keys.content | b64decode)
+        | authorized_has_key(local_actions_pub_slurp.content | b64decode)
+      }}
+  no_log: true
+
+- name: Остановить, если публичного ключа Actions нет у deploy
+  ansible.builtin.assert:
+    that:
+      - deploy_actions_key_present | bool
+    fail_msg: >-
+      В authorized_keys пользователя {{ deploy_user }} нет публичного ключа
+      локальной пары Actions. Комментарий и options строки не учитываются.
+      Файл не изменялся.
+    quiet: true
 
 - name: Проверить локальную копию ключа, если она должна быть
   ansible.builtin.stat:

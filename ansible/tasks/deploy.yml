@@ -123,39 +123,43 @@
           (deploy_grafana_blockers | reject('equalto', 'admin_password_rejected') | list | length > 0)
           or deploy_exporter_problem | length > 0
 
-    - name: Записать DATA_SOURCE_URI по POSTGRES_DB
-      ansible.builtin.copy:
-        dest: "{{ devops_env_dir }}/postgres-exporter.env"
-        owner: "{{ deploy_user }}"
-        group: "{{ deploy_group }}"
-        mode: "0600"
-        content: >-
+    - name: Собрать текст postgres-exporter.env после разрешённого sync
+      ansible.builtin.set_fact:
+        exporter_synced_text: >-
           {{
             (deploy_secret_slurp.results[1].content | b64decode)
             | sync_env({'DATA_SOURCE_URI': deploy_postgres_env.POSTGRES_DB | datasource_uri})
           }}
       no_log: true
-      diff: false
       when:
         - allow_env_sync | bool
         - deploy_exporter_problem | length > 0
 
-    - name: Записать только недостающие параметры входа Grafana
-      ansible.builtin.copy:
-        dest: "{{ devops_env_dir }}/grafana.env"
-        owner: "{{ deploy_user }}"
-        group: "{{ deploy_group }}"
-        mode: "0600"
-        content: >-
+    - name: Записать postgres-exporter.env и его локальную копию
+      ansible.builtin.include_tasks: tasks/sync_env_copy.yml
+      vars:
+        sync_file: postgres-exporter.env
+        sync_text: "{{ exporter_synced_text | default('') }}"
+      when: exporter_synced_text is defined
+
+    - name: Собрать текст grafana.env после разрешённого sync
+      ansible.builtin.set_fact:
+        grafana_synced_text: >-
           {{
             (deploy_secret_slurp.results[2].content | b64decode)
             | sync_env(deploy_grafana_blockers | grafana_sync_updates)
           }}
       no_log: true
-      diff: false
       when:
         - allow_env_sync | bool
         - deploy_grafana_blockers | grafana_sync_updates | length > 0
+
+    - name: Записать grafana.env и его локальную копию
+      ansible.builtin.include_tasks: tasks/sync_env_copy.yml
+      vars:
+        sync_file: grafana.env
+        sync_text: "{{ grafana_synced_text | default('') }}"
+      when: grafana_synced_text is defined
 
     - name: Повторно прочитать env после синхронизации
       ansible.builtin.slurp:
@@ -352,21 +356,25 @@
       loop_control:
         label: "{{ item.item }}"
 
-    - name: Проверить каталоги данных
-      ansible.builtin.stat:
-        path: "{{ devops_checkout }}/{{ item }}"
-      loop: "{{ deploy_data_dirs }}"
-      register: deploy_data_stats
+    - name: Создать data отдельно от корней сервисов
+      ansible.builtin.file:
+        path: "{{ devops_checkout }}/data"
+        state: directory
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_group }}"
+        mode: "0755"
 
-    - name: Остановить, если вместо каталога данных лежит файл
-      ansible.builtin.fail:
-        msg: "{{ item.stat.path }} существует и это не каталог. Не удаляю."
-      loop: "{{ deploy_data_stats.results }}"
-      when:
-        - item.stat.exists
-        - not item.stat.isdir
+    - name: Отказать до загрузки образов, если корень данных не каталог
+      ansible.builtin.include_tasks: tasks/datadir_kind.yml
+      vars:
+        data_root: "{{ item }}"
+      loop:
+        - data/postgres
+        - data/redis
+        - data/prometheus
+        - data/grafana
       loop_control:
-        label: "{{ item.item }}"
+        label: "{{ item }}"
 
     - name: Подготовить корни данных Redis, Prometheus и Grafana
       ansible.builtin.include_tasks: tasks/service_datadir.yml

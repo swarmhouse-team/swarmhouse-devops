@@ -186,19 +186,6 @@
       В WSL храните ключ в Linux-домашнем каталоге, не в /mnt/c.
   when: local_actions_private_mode.stat.mode | default('') != '0600'
 
-- name: Подтвердить установку канонической локальной пары
-  ansible.builtin.set_fact:
-    actions_key_plan: >-
-      {{
-        {
-          'local_private': true,
-          'local_public': true,
-          'local_matches_derived': 'yes',
-          'server_private': server_actions_key_stats.results[0].stat.exists,
-          'server_public': server_actions_key_stats.results[1].stat.exists
-        } | classify_actions_key
-      }}
-
 - name: Поставить публичный ключ deploy, не трогая остальные
   ansible.builtin.authorized_key:
     user: "{{ deploy_user }}"
@@ -208,7 +195,6 @@
     manage_dir: true
   no_log: true
   diff: false
-  when: actions_key_plan.action == 'install'
 
 - name: Положить публичный ключ на VPS, если legacy-файлов нет
   ansible.builtin.copy:
@@ -221,7 +207,6 @@
   no_log: true
   diff: false
   when:
-    - actions_key_plan.action == 'install'
     - not (server_actions_key_stats.results[0].stat.exists | bool)
     - not (server_actions_key_stats.results[1].stat.exists | bool)
 

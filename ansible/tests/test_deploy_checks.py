@@ -19,6 +19,7 @@ from deploy_checks import (  # noqa: E402
     sync_env,
     sync_updates,
 )
+from env_parse import parse_env  # noqa: E402
 
 
 def main():
@@ -131,6 +132,41 @@ def main():
     assert "service_ready" in task
     assert "_task.result.stdout" in task
     assert "stdout is match" not in task
+    exporter_local = "\n".join(
+        [
+            "DATA_SOURCE_USER=postgres_exporter",
+            "DATA_SOURCE_PASS=keep-this-secret",
+            "DATA_SOURCE_URI=postgres:5432/other?sslmode=disable",
+        ]
+    ) + "\n"
+    exporter_server = sync_env(exporter_local, {"DATA_SOURCE_URI": datasource_uri("app")})
+    assert "DATA_SOURCE_PASS=keep-this-secret" in exporter_server
+    assert "DATA_SOURCE_URI=postgres:5432/app?sslmode=disable" in exporter_server
+    assert "GF_SECURITY" not in exporter_server
+    try:
+        sync_env(exporter_local, {"DATA_SOURCE_PASS": "other"})
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("password sync was accepted")
+
+    grafana_local = "\n".join(
+        [
+            "GF_SECURITY_ADMIN_USER=admin",
+            "GF_SECURITY_ADMIN_PASSWORD=keep-this-secret",
+            "GF_AUTH_BASIC_ENABLED=true",
+            "GF_AUTH_ANONYMOUS_ENABLED=false",
+            "GF_SERVER_PROTOCOL=http",
+            "GF_SERVER_ROOT_URL=http://127.0.0.1:3000",
+            "GF_SECURITY_COOKIE_SECURE=true",
+        ]
+    ) + "\n"
+    grafana_updates = grafana_sync_updates(grafana_blockers(parse_env(grafana_local)))
+    grafana_server = sync_env(grafana_local, grafana_updates)
+    assert "GF_SECURITY_ADMIN_PASSWORD=keep-this-secret" in grafana_server
+    assert "GF_SECURITY_COOKIE_SECURE=false" in grafana_server
+    assert "DATA_SOURCE_URI" not in grafana_server
+    assert grafana_server != exporter_server
     assert restore_db_from_log("Восстановление завершено. Тестовая база: restore_test_20260101_000000") == (
         "restore_test_20260101_000000"
     )

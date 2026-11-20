@@ -1,22 +1,4 @@
 ---
-- name: Найти контейнеры проекта по точному имени
-  ansible.builtin.command:
-    argv: ["docker", "inspect", "--format", "{{ '{{' }}.Name{{ '}}' }}", item]
-  loop: "{{ project_containers }}"
-  register: project_container_inspect
-  changed_when: false
-  failed_when: false
-
-- name: Собрать найденные контейнеры проекта
-  ansible.builtin.set_fact:
-    existing_project_containers: >-
-      {{
-        project_container_inspect.results
-        | selectattr('rc', 'equalto', 0)
-        | map(attribute='item')
-        | list
-      }}
-
 - name: Список имён всех контейнеров
   ansible.builtin.command:
     argv:
@@ -27,6 +9,13 @@
       - "{{ '{{' }}.Names{{ '}}' }}"
   register: all_container_names
   changed_when: false
+
+- name: Собрать найденные контейнеры проекта
+  ansible.builtin.set_fact:
+    existing_project_containers: >-
+      {{
+        project_containers | intersect(all_container_names.stdout_lines)
+      }}
 
 - name: Отметить контейнеры Jira, не изменяя их
   ansible.builtin.set_fact:

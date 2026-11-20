@@ -9,6 +9,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "filter_plugins"))
 
 from actions_key import (  # noqa: E402
+    authorized_has_key,
     classify_actions_key,
     env_copy_action,
     local_dirs_conflict,
@@ -30,6 +31,21 @@ def main():
     pub_other = "ssh-ed25519 %s comment-a" % OTHER
     assert same_public(pub_a, pub_b) is True
     assert same_public(pub_a, pub_other) is False
+    authorized = "\n".join(
+        [
+            "ssh-ed25519 %s other-comment" % MATERIAL,
+            'restrict,command="echo hi" ssh-ed25519 %s same-comment' % OTHER,
+            "# ssh-ed25519 %s comment" % MATERIAL,
+        ]
+    )
+    original_authorized = authorized
+    assert authorized_has_key(authorized, pub_a) is True
+    assert authorized_has_key(authorized, "ssh-ed25519 %s different-comment" % MATERIAL) is True
+    assert authorized_has_key(authorized, pub_other) is True
+    assert authorized_has_key(authorized, "ssh-ed25519 %s same-comment" % MATERIAL) is True
+    wrong_same_comment = "ssh-ed25519 %s comment-a" % ("B" * len(MATERIAL))
+    assert authorized_has_key("ssh-ed25519 %s comment-a" % MATERIAL, wrong_same_comment) is False
+    assert authorized == original_authorized
 
     first = plan(local_private=False, local_public=False, server_private=False, server_public=False)
     assert first == {"action": "generate", "reason": "new_install"}

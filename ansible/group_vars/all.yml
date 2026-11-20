@@ -94,11 +94,6 @@ deploy_compose:
 deploy_networks:
   - infra
   - monitoring
-deploy_data_dirs:
-  - data/postgres
-  - data/redis
-  - data/prometheus
-  - data/grafana
 deploy_image_prefix:
   postgres: postgres
   redis: redis

@@ -19,6 +19,8 @@ DEPLOY = (ROOT / "tasks" / "deploy.yml").read_text(encoding="utf-8")
 DATADIR = (ROOT / "tasks" / "postgres_datadir.yml").read_text(encoding="utf-8")
 ACCESS = (ROOT / "tasks" / "postgres_access.yml").read_text(encoding="utf-8")
 SERVICE = (ROOT / "tasks" / "service_datadir.yml").read_text(encoding="utf-8")
+KIND = (ROOT / "tasks" / "datadir_kind.yml").read_text(encoding="utf-8")
+ROOTDIR = (ROOT / "tasks" / "datadir_root.yml").read_text(encoding="utf-8")
 
 
 def main():
@@ -31,12 +33,10 @@ def main():
     assert debian == {"uid": 70, "gid": 70}
     other = parse_posix_id("uid=999(postgres) gid=999(postgres) groups=999(postgres)")
     assert other["uid"] == 999
-    try:
-        parse_posix_id("uid=0(root) gid=0(root) groups=0(root)")
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("root was accepted")
+    root = parse_posix_id("uid=0(root) gid=0(root) groups=0(root)")
+    assert root == {"uid": 0, "gid": 0}
+    root_dir = postgres_dir_plan(False, 0, 0, "", 0, 0)
+    assert root_dir == {"action": "create", "chown": True, "mode": "0700", "recurse": False}
     try:
         parse_posix_id("postgres")
     except ValueError:
@@ -88,38 +88,42 @@ def main():
     assert "0750" not in prepare
     for host in ("data/redis", "data/prometheus", "data/grafana"):
         assert host in prepare
+    assert DEPLOY.index("{{ devops_checkout }}/data") < DEPLOY.index("datadir_kind.yml")
+    assert "datadir_kind.yml" in DEPLOY
+    assert DEPLOY.index("datadir_kind.yml") < DEPLOY.index("service_datadir.yml")
     assert "service_datadir.yml" in DEPLOY
     assert DEPLOY.index("service_datadir.yml") < DEPLOY.index("postgres_datadir.yml")
     assert DEPLOY.index("postgres_datadir.yml") < DEPLOY.index("Запустить postgres и redis")
     assert DEPLOY.index("Запустить postgres и redis") < DEPLOY.index("postgres_access.yml")
 
-    assert "recurse: false" in DATADIR
-    assert "recurse: true" not in DATADIR
-    assert "-R" not in DATADIR
-    assert "0777" not in DATADIR
+    for text in (KIND, ROOTDIR, DATADIR, SERVICE):
+        assert "recurse: true" not in text
+        assert "-R" not in text
+        assert "0777" not in text
+        assert "deploy_user" not in text
+    assert "recurse: false" in ROOTDIR
+    assert "islnk" in KIND
+    assert "chown" in ROOTDIR
     assert "999" not in DATADIR
-    assert "deploy_user" not in DATADIR
+    assert "65534" not in SERVICE
+    assert "472" not in SERVICE
     assert "--entrypoint" in DATADIR
-    assert "id" in DATADIR
+    assert "\n      - id\n" in DATADIR
     assert "--user" in DATADIR
     assert "target=/var/lib/postgresql,readonly" in DATADIR
     assert "test -x /var/lib/postgresql" in DATADIR
-    assert "chown" in DATADIR
-    assert DATADIR.index("parse_posix_id") < DATADIR.index("chown")
+    assert DATADIR.index("parse_posix_id") < DATADIR.index("datadir_kind.yml")
+    assert DATADIR.index("datadir_kind.yml") < DATADIR.index("datadir_root.yml")
+    assert DATADIR.count("datadir_kind.yml") == 1
     assert "test -d \"$PGDATA\"" in ACCESS
     assert "--user" in ACCESS
     assert "999" not in ACCESS
-    assert "recurse: false" in SERVICE
-    assert "recurse: true" not in SERVICE
-    assert "-R" not in SERVICE
-    assert "0777" not in SERVICE
-    assert "65534" not in SERVICE
-    assert "472" not in SERVICE
-    assert "deploy_user" not in SERVICE
     assert "--entrypoint" in SERVICE
     assert "\n      - id\n" in SERVICE
     assert "test -w" in SERVICE
-    assert SERVICE.index("parse_posix_id") < SERVICE.index("chown")
+    assert SERVICE.index("parse_posix_id") < SERVICE.index("datadir_kind.yml")
+    assert SERVICE.index("datadir_kind.yml") < SERVICE.index("datadir_root.yml")
+    assert SERVICE.count("datadir_kind.yml") == 1
 
     print("id", debian["uid"], other["uid"])
     print("create", created["action"])

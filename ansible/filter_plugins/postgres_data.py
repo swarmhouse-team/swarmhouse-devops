@@ -34,8 +34,8 @@ def parse_posix_id(text):
         raise ValueError("id output has no uid or gid")
     uid = int(uid_match.group(1))
     gid = int(gid_match.group(1))
-    if uid <= 0 or gid < 0:
-        raise ValueError("image user must not be root")
+    if uid < 0 or gid < 0:
+        raise ValueError("id output has a negative uid or gid")
     return {"uid": uid, "gid": gid}
 
 
@@ -61,7 +61,7 @@ def _bits(mode):
 def postgres_dir_plan(exists, uid, gid, mode, image_uid, image_gid):
     image_uid = int(image_uid)
     image_gid = int(image_gid)
-    if image_uid <= 0 or image_gid < 0:
+    if image_uid < 0 or image_gid < 0:
         raise ValueError("bad image user")
     if not exists:
         return {"action": "create", "chown": True, "mode": "0700", "recurse": False}

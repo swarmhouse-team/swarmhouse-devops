@@ -29,6 +29,52 @@ def same_public(left, right):
     return first is not None and first == second
 
 
+def _authorized_tokens(line):
+    tokens = []
+    buffer = []
+    quote = ""
+    for char in str(line or "").strip():
+        if quote:
+            buffer.append(char)
+            if char == quote:
+                quote = ""
+            continue
+        if char in "\"'":
+            quote = char
+            buffer.append(char)
+            continue
+        if char.isspace():
+            if buffer:
+                tokens.append("".join(buffer))
+                buffer = []
+            continue
+        buffer.append(char)
+    if buffer:
+        tokens.append("".join(buffer))
+    return tokens
+
+
+def authorized_material(line):
+    tokens = _authorized_tokens(line)
+    for index, token in enumerate(tokens[:-1]):
+        if token.startswith(("ssh-", "ecdsa-", "sk-ssh-", "sk-ecdsa-")):
+            return (token, tokens[index + 1])
+    return None
+
+
+def authorized_has_key(text, public):
+    wanted = public_material(public)
+    if wanted is None:
+        return False
+    for line in str(text or "").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if authorized_material(stripped) == wanted:
+            return True
+    return False
+
+
 def classify_actions_key(state):
     state = state or {}
     local_private = _bool(state.get("local_private"))
@@ -80,6 +126,8 @@ class FilterModule:
         return {
             "public_material": public_material,
             "same_public": same_public,
+            "authorized_material": authorized_material,
+            "authorized_has_key": authorized_has_key,
             "classify_actions_key": classify_actions_key,
             "local_dirs_conflict": local_dirs_conflict,
             "env_copy_action": env_copy_action,
