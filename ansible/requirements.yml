@@ -1,0 +1,6 @@
+---
+# ansible-galaxy collection install -r requirements.yml
+# Коллекция нужна на управляющей машине для docker_compose_v2.
+collections:
+  - name: community.docker
+    version: ">=4.5.0"

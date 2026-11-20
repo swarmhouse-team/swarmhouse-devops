@@ -108,8 +108,6 @@ services:
     <<: *common
     image: quay.io/prometheuscommunity/postgres-exporter:${POSTGRES_EXPORTER_VERSION:?Set POSTGRES_EXPORTER_VERSION in .env}
     container_name: postgres-exporter
-    command:
-      - --datasource.uri=postgres:5432/swarmhouse_db?sslmode=disable
     env_file:
       - ./env/postgres-exporter.env
     cpus: 0.25

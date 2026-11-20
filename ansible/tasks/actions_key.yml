@@ -1,0 +1,149 @@
+---
+- name: Проверить пару ключей GitHub Actions
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ devops_actions_key }}"
+    - "{{ devops_actions_pub }}"
+  register: actions_key_stats
+
+- name: Разобрать состояние пары ключей
+  ansible.builtin.set_fact:
+    actions_private_exists: "{{ actions_key_stats.results[0].stat.exists }}"
+    actions_public_exists: "{{ actions_key_stats.results[1].stat.exists }}"
+
+- name: Остановить при неполной паре ключей
+  ansible.builtin.fail:
+    msg: >-
+      На VPS есть приватный ключ {{ devops_actions_key }}, но нет {{ devops_actions_pub }}.
+      Новую пару не создаю и доступ не ротирую. Восстановите публичный ключ вручную
+      или удалите неполный файл после проверки.
+  when:
+    - actions_private_exists | bool
+    - not (actions_public_exists | bool)
+
+# openssh_keypair тянет cryptography на VPS. ssh-keygen уже ставится пакетом openssh-client.
+- name: Сгенерировать Ed25519-пару на VPS
+  ansible.builtin.command:
+    argv:
+      - ssh-keygen
+      - -q
+      - -t
+      - ed25519
+      - -N
+      - ""
+      - -C
+      - "{{ devops_actions_comment }}"
+      - -f
+      - "{{ devops_actions_key }}"
+  args:
+    creates: "{{ devops_actions_pub }}"
+  no_log: true
+  diff: false
+  when: not (actions_public_exists | bool)
+
+- name: Зафиксировать права каталога и публичного ключа
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ devops_actions_dir }}", mode: "0700" }
+    - { path: "{{ devops_actions_pub }}", mode: "0644" }
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Зафиксировать права приватного ключа, если он есть
+  ansible.builtin.file:
+    path: "{{ devops_actions_key }}"
+    owner: root
+    group: root
+    mode: "0600"
+  when: actions_private_exists | bool or not (actions_public_exists | bool)
+
+- name: Прочитать публичный ключ
+  ansible.builtin.slurp:
+    src: "{{ devops_actions_pub }}"
+  register: actions_pub_slurp
+
+- name: Добавить публичный ключ deploy, не трогая остальные
+  ansible.builtin.authorized_key:
+    user: "{{ deploy_user }}"
+    state: present
+    exclusive: false
+    key: "{{ actions_pub_slurp.content | b64decode }}"
+    manage_dir: true
+  no_log: true
+  diff: false
+
+- name: Подготовить локальный каталог копии ключа
+  ansible.builtin.file:
+    path: "{{ local_vps_dir }}/github-actions"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  become: false
+
+- name: Проверить серверную копию приватного ключа
+  ansible.builtin.stat:
+    path: "{{ devops_actions_key }}"
+    checksum_algorithm: sha256
+  register: remote_actions_private
+
+- name: Проверить локальную копию приватного ключа
+  ansible.builtin.stat:
+    path: "{{ local_vps_dir }}/github-actions/id_ed25519"
+    checksum_algorithm: sha256
+  register: local_actions_private
+  delegate_to: localhost
+  become: false
+
+- name: Остановить, если локальный приватный ключ отличается
+  ansible.builtin.fail:
+    msg: >-
+      Локальный файл {{ local_vps_dir }}/github-actions/id_ed25519
+      уже есть и не совпадает с копией на VPS. Файл не перезаписываю.
+  when:
+    - remote_actions_private.stat.exists
+    - local_actions_private.stat.exists
+    - remote_actions_private.stat.checksum != local_actions_private.stat.checksum
+
+# fetch читает файл на целевой VM. delegate_to: localhost здесь нельзя: источником стала бы управляющая машина.
+- name: Забрать приватный ключ на управляющую машину
+  ansible.builtin.fetch:
+    src: "{{ devops_actions_key }}"
+    dest: "{{ local_vps_dir }}/github-actions/id_ed25519"
+    flat: true
+  no_log: true
+  diff: false
+  when:
+    - remote_actions_private.stat.exists
+    - not local_actions_private.stat.exists
+
+- name: Права локального приватного ключа
+  ansible.builtin.file:
+    path: "{{ local_vps_dir }}/github-actions/id_ed25519"
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+  when: remote_actions_private.stat.exists or local_actions_private.stat.exists
+
+- name: Проверить, что локальный ключ не лежит на каталоге без POSIX-прав
+  ansible.builtin.stat:
+    path: "{{ local_vps_dir }}/github-actions/id_ed25519"
+  register: local_actions_private_mode
+  delegate_to: localhost
+  become: false
+  when: remote_actions_private.stat.exists or local_actions_private.stat.exists
+
+- name: Остановить, если локальному ключу нельзя выставить 0600
+  ansible.builtin.fail:
+    msg: >-
+      Не удалось оставить {{ local_vps_dir }}/github-actions/id_ed25519 в режиме 0600
+      (сейчас {{ local_actions_private_mode.stat.mode | default('неизвестно') }}).
+      В WSL храните копию в Linux-домашнем каталоге, не в /mnt/c.
+  when:
+    - local_actions_private_mode is not skipped
+    - local_actions_private_mode.stat.exists | default(false)
+    - local_actions_private_mode.stat.mode != '0600'

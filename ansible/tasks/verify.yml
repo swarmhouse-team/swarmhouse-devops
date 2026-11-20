@@ -1,0 +1,109 @@
+---
+- name: Проверить Docker и Compose
+  ansible.builtin.command: "{{ item }}"
+  loop:
+    - docker info
+    - docker compose version
+  changed_when: false
+
+- name: Прочитать состояние сервиса Docker
+  ansible.builtin.service_facts:
+
+- name: Остановить, если Docker не активен
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.services['docker.service'].state == 'running'
+      - ansible_facts.services['docker.service'].status == 'enabled'
+    fail_msg: "Сервис docker должен быть running и enabled."
+    quiet: true
+
+- name: Проверить пользователя deploy и группу docker
+  ansible.builtin.command: id {{ deploy_user }}
+  register: deploy_id
+  changed_when: false
+
+- name: Остановить, если deploy не в группе docker
+  ansible.builtin.assert:
+    that:
+      - "'docker' in deploy_id.stdout"
+    fail_msg: "Пользователь {{ deploy_user }} не входит в группу docker. Новая SSH-сессия это тоже не исправит, пока группа не назначена."
+    quiet: true
+
+- name: Проверить владельцев и права каталогов
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+  loop:
+    - { path: "{{ devops_root }}", owner: root, mode: "" }
+    - { path: "{{ devops_checkout }}", owner: "{{ deploy_user }}", mode: "" }
+    - { path: "{{ devops_secrets }}", owner: root, mode: "0755" }
+    - { path: "{{ devops_env_dir }}", owner: "{{ deploy_user }}", mode: "0700" }
+    - { path: "{{ devops_actions_dir }}", owner: root, mode: "0700" }
+    - { path: "{{ devops_actions_pub }}", owner: root, mode: "0644" }
+  loop_control:
+    label: "{{ item.path }}"
+  register: layout_stats
+
+- name: Сверить владельцев и права
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.isdir or item.item.path == devops_actions_pub
+      - item.stat.pw_name == item.item.owner
+      - item.item.mode == '' or item.stat.mode == item.item.mode
+    fail_msg: >-
+      {{ item.item.path }}: владелец {{ item.stat.pw_name | default('нет') }},
+      режим {{ item.stat.mode | default('нет') }}.
+      Ожидалось {{ item.item.owner }} и {{ item.item.mode }}.
+    quiet: true
+  loop: "{{ layout_stats.results }}"
+  loop_control:
+    label: "{{ item.item.path }}"
+
+- name: Проверить, что публичный ключ есть у deploy
+  ansible.builtin.command:
+    argv:
+      - grep
+      - -F
+      - -q
+      - "{{ devops_actions_comment }}"
+      - "/home/{{ deploy_user }}/.ssh/authorized_keys"
+  changed_when: false
+  no_log: true
+
+- name: Проверить локальную копию ключа, если она должна быть
+  ansible.builtin.stat:
+    path: "{{ local_vps_dir }}/github-actions/id_ed25519"
+  register: verify_local_key
+  delegate_to: localhost
+  become: false
+
+- name: Остановить, если серверный ключ не скопирован локально
+  ansible.builtin.fail:
+    msg: >-
+      Приватный ключ есть на VPS ({{ devops_actions_key }}),
+      но локальной копии {{ local_vps_dir }}/github-actions/id_ed25519 нет.
+  when:
+    - remote_actions_private.stat.exists | default(false)
+    - not verify_local_key.stat.exists
+
+- name: Собрать отчёт
+  ansible.builtin.debug:
+    msg:
+      - "Docker: {{ 'установлен этим запуском' if docker_installed_by_bootstrap | default(false) else 'уже был и оставлен' }}"
+      - "Пользователь {{ deploy_user }}: {{ 'создан' if deploy_user_created | bool else 'уже был' }}, группа docker есть"
+      - "Checkout {{ devops_checkout }}: {{ 'склонирован' if checkout_created | bool else ('переключён' if checkout_switched | default(false) else 'уже был') }}, версия {{ devops_git_version }}"
+      - "Контейнеры проекта на хосте: {{ existing_project_containers | default([]) | join(', ') if (existing_project_containers | default([]) | length > 0) else 'не найдены' }}"
+      - "Контейнеры с jira в имени, не изменялись: {{ existing_jira_containers | default([]) | join(', ') if (existing_jira_containers | default([]) | length > 0) else 'не найдены' }}"
+      - "Непустые каталоги данных, не изменялись: {{ nonempty_data_dirs | default([]) | join(', ') if (nonempty_data_dirs | default([]) | length > 0) else 'не найдены' }}"
+      - "Секреты на VPS: {{ devops_env_dir }} (0600, {{ deploy_user }})"
+      - "Публичный ключ Actions: {{ devops_actions_pub }}"
+      - "Временный приватный ключ на VPS: {{ 'ещё лежит ' ~ devops_actions_key if remote_actions_private.stat.exists | default(false) else 'уже удалён, пара не ротировалась' }}"
+      - "Локальные копии: {{ local_vps_dir }}"
+      - "Внешние значения, которые bootstrap не создаёт: JIRA_API_TOKEN, JIRA_USER"
+      - "В GitHub вручную: secret DEPLOY_SSH_KEY, secret DEPLOY_KNOWN_HOSTS, vars DEPLOY_HOST, DEPLOY_USER, DEPLOY_PORT"
+      - "Вход GitHub Actions на VPS этим playbook не проверялся"
+      - "База exporter берётся из POSTGRES_DB. Роль создаётся только при deploy_services=true и только если её ещё нет"
+      - "Новый grafana.env включает вход по паролю и выключает анонимный доступ. Существующий файл меняется только при allow_env_sync=true. Jira-значения bootstrap не генерирует"
+      - "Запуск сервисов: {{ 'выполнен, миграций приложения в этом репозитории нет' if deploy_applied | default(false) else 'выключен, deploy_services=false' }}"
+      - "Тестовый бэкап: {{ 'дамп создан и проверен восстановлением в restore_test_, рабочая база не перезаписывалась, внешней копии нет' if backup_test_ok | default(false) else 'не делался, cron-задача не добавлялась' }}"
+      - "Cron {{ backup_cron_name }}: {{ 'в crontab ' ~ backup_user if backup_cron_added | default(false) else 'не добавлялась' }}, KEEP скрипта не менялся"

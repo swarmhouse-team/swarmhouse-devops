@@ -41,7 +41,7 @@
 
 `POSTGRES_INITDB_ARGS` применяется только при первой инициализации пустого каталога данных.
 
-В `docker-compose.monitoring.yml` у postgres-exporter строка подключения фиксирована: `postgres:5432/swarmhouse_db?sslmode=disable`. В `env/postgres.env.example` база названа `app`. Какое имя базы записано в боевом `env/postgres.env`, из репозитория не видно. Экспортёр подключится только если в PostgreSQL есть база `swarmhouse_db` и роль из `DATA_SOURCE_USER`. Скрипта создания этой роли в репозитории нет.
+`postgres-exporter` читает `DATA_SOURCE_URI` из `env/postgres-exporter.env`. В примере это `postgres:5432/app?sslmode=disable`, то же имя, что `POSTGRES_DB` в `env/postgres.env.example`. Роль и пароль — `DATA_SOURCE_USER` и `DATA_SOURCE_PASS`. Playbook при `deploy_services=true` создаёт отсутствующую роль и выдаёт `pg_monitor` и `CONNECT`. Существующий пароль роли не меняется.
 
 `redis-exporter` ходит на `redis://redis:6379` и берёт пароль из `env/redis-exporter.env`. Этот пароль должен совпадать с `REDIS_PASSWORD` контейнера `redis`. Репозиторий совпадение не проверяет.
 
@@ -98,7 +98,7 @@ docker compose -f docker-compose.yml up -d
 docker compose -f docker-compose.monitoring.yml up -d
 ```
 
-`git pull` сработает только если каталог — обычный клон с веткой. CD переводит каталог в detached HEAD на SHA `main` и при локальных изменениях отслеживаемых файлов останавливается. Затем он пересоздаёт `postgres` и `redis`, после них — сервисы мониторинга. `alloy-init` должен завершиться с кодом 0, остальные контейнеры мониторинга — быть в состоянии running. CD не ждёт healthcheck у мониторинга: в Compose его нет.
+`git pull` сработает только если каталог — обычный клон с веткой. CD переводит каталог в detached HEAD на SHA `main` и при локальных изменениях отслеживаемых файлов останавливается. Затем он пересоздаёт `postgres` и `redis`, после них — сервисы мониторинга. `alloy-init` должен завершиться с кодом 0, остальные контейнеры мониторинга — быть в состоянии running. CD после запуска мониторинга ждёт `pg_up=1` у Prometheus на loopback и печатает предыдущий SHA. Автоматического возврата коммита нет. Healthcheck в Compose по-прежнему есть только у `postgres` и `redis`.
 
 Смена файлов в `conf/` попадает в контейнер после пересоздания соответствующего сервиса. `up -d` пересоздаёт сервис, если изменился Compose или монтируемый файл.
 
@@ -121,7 +121,7 @@ Loki, Alloy, cAdvisor и экспортёры порт на хост не пуб
 ssh -L 3000:127.0.0.1:3000 -L 9090:127.0.0.1:9090 -p <порт> <пользователь>@<хост>
 ```
 
-После этого Grafana открывается как `http://127.0.0.1:3000`, Prometheus — `http://127.0.0.1:9090`. Логин Grafana читается из `env/grafana.env` (`GF_SECURITY_ADMIN_USER`, `GF_SECURITY_ADMIN_PASSWORD`). В `conf/grafana/grafana.ini` регистрация и анонимный доступ выключены.
+После этого Grafana открывается как `http://127.0.0.1:3000`, Prometheus — `http://127.0.0.1:9090`. Логин Grafana читается из `env/grafana.env` (`GF_SECURITY_ADMIN_USER`, `GF_SECURITY_ADMIN_PASSWORD`). В `conf/grafana/grafana.ini` регистрация и анонимный доступ выключены. Вход — форма Grafana по `GF_SECURITY_ADMIN_USER` и `GF_SECURITY_ADMIN_PASSWORD`, поэтому в новом env `GF_AUTH_BASIC_ENABLED=true`. Публичного HTTP и TLS в репозитории нет, порты слушают loopback, поэтому `GF_SECURITY_COOKIE_SECURE=false`: иначе браузер по `http://127.0.0.1:3000` не сохранит сессию. `GF_AUTH_ANONYMOUS_ENABLED` должен оставаться `false`.
 
 PostgreSQL и Redis с рабочей машины через такой туннель тоже попадут на loopback VPS. Для обычной работы приложений туннель не нужен: приложение в сети `infra` подключается к контейнерам `postgres:5432` и `redis:6379`.
 

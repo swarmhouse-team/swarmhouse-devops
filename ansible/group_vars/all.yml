@@ -1,0 +1,137 @@
+---
+deploy_user: deploy
+deploy_group: deploy
+deploy_shell: /bin/bash
+
+devops_root: /opt/swarmhouse
+devops_checkout: /opt/swarmhouse/swarmhouse-devops
+devops_secrets: /opt/swarmhouse/secrets
+devops_env_dir: /opt/swarmhouse/secrets/env
+devops_actions_dir: /opt/swarmhouse/secrets/github-actions
+devops_actions_key: /opt/swarmhouse/secrets/github-actions/id_ed25519
+devops_actions_pub: /opt/swarmhouse/secrets/github-actions/id_ed25519.pub
+devops_actions_comment: github-actions@swarmhouse-devops
+
+# HTTPS-форма origin git@github.com:swarmhouse-team/swarmhouse-devops.git
+devops_repo_url: https://github.com/swarmhouse-team/swarmhouse-devops.git
+# Ветка, которую ждёт .github/workflows/infra-cd.yml.
+# Для тестовой VM переопределяется в inventory.test.yml. Ref должен быть запушен в GitHub.
+devops_git_version: main
+# true разрешает перевести уже существующий checkout на devops_git_version.
+# false сохраняет текущий HEAD и останавливает playbook при несовпадении.
+allow_checkout_switch: false
+
+local_vps_dir: "{{ lookup('env', 'HOME') }}/.swarmhouse/vps/{{ inventory_hostname }}"
+
+# Версии, для которых Docker публикует apt-репозиторий stable.
+supported_os:
+  Ubuntu:
+    - "22.04"
+    - "24.04"
+    - "26.04"
+    - "26.10"
+  Debian:
+    - "12"
+    - "13"
+
+project_containers:
+  - postgres
+  - redis
+  - prometheus
+  - grafana
+  - loki
+  - alloy
+  - alloy-init
+  - cadvisor
+  - node-exporter
+  - postgres-exporter
+  - redis-exporter
+
+env_placeholders:
+  - ci-placeholder-not-for-production
+  - change_me_strong_password
+  - api-token
+  - email-jira
+  - root_url
+
+# Несекретные значения из env/*.example. Пароли сюда не входят.
+postgres_identity:
+  POSTGRES_DB: app
+  POSTGRES_USER: app_admin
+  POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+postgres_exporter_user: postgres_exporter
+grafana_admin_user: admin
+grafana_bind_port: 3000
+
+# true дописывает в существующие env только DATA_SOURCE_URI и параметры входа Grafana.
+# Пароли, JIRA_API_TOKEN и JIRA_USER эта синхронизация не записывает.
+allow_env_sync: false
+
+# Запуск контейнеров только при -e deploy_services=true.
+# down, удаление volumes, pull always и force-recreate playbook не делает.
+deploy_services: false
+deploy_wait_timeout: 120
+deploy_compose:
+  - project_name: infrastructure_server
+    file: docker-compose.yml
+    wait: true
+    services:
+      - postgres
+      - redis
+  - project_name: monitoring
+    file: docker-compose.monitoring.yml
+    wait: false
+    services:
+      - alloy-init
+      - prometheus
+      - grafana
+      - loki
+      - alloy
+      - cadvisor
+      - node-exporter
+      - postgres-exporter
+      - redis-exporter
+deploy_networks:
+  - infra
+  - monitoring
+deploy_data_dirs:
+  - data/postgres
+  - data/redis
+  - data/prometheus
+  - data/grafana
+deploy_image_prefix:
+  postgres: postgres
+  redis: redis
+  prometheus: prom/prometheus
+  grafana: grafana/grafana
+  node-exporter: prom/node-exporter
+  postgres-exporter: quay.io/prometheuscommunity/postgres-exporter
+  redis-exporter: oliver006/redis_exporter
+  cadvisor: ghcr.io/google/cadvisor
+  loki: grafana/loki
+  alloy: grafana/alloy
+  alloy-init: grafana/alloy
+deploy_image_env:
+  postgres: POSTGRES_TAG
+  redis: REDIS_TAG
+  prometheus: PROMETHEUS_VERSION
+  grafana: GRAFANA_VERSION
+  node-exporter: NODE_EXPORTER_VERSION
+  postgres-exporter: POSTGRES_EXPORTER_VERSION
+  redis-exporter: REDIS_EXPORTER_VERSION
+  cadvisor: CADVISOR_VERSION
+  loki: LOKI_VERSION
+  alloy: ALLOY_VERSION
+  alloy-init: ALLOY_VERSION
+
+# Расписание cron. KEEP в scripts/backup-postgres.sh равен 5: другое backup_keep playbook не применяет.
+backup_user: deploy
+backup_cron_name: swarmhouse-postgres-backup
+backup_minute: "15"
+backup_hour: "3"
+backup_day: "*"
+backup_month: "*"
+backup_weekday: "*"
+backup_keep: 5
+backup_log: /var/log/swarmhouse-postgres-backup.log
+backup_script: "{{ devops_checkout }}/scripts/backup-postgres.sh"

@@ -1,0 +1,55 @@
+---
+- name: Не использовать check mode как репетицию установки
+  ansible.builtin.fail:
+    msg: >-
+      --check не ставит пакеты, не генерирует ключи и пароли и не показывает
+      итоговое состояние VPS. Запускайте bootstrap без --check.
+  when: ansible_check_mode | bool
+
+- name: Проверить обязательные параметры
+  ansible.builtin.assert:
+    that:
+      - ansible_host | default('') | length > 0
+      - ansible_user | default('') | length > 0
+      - deploy_user | length > 0
+      - devops_repo_url | length > 0
+      - devops_git_version | length > 0
+      - allow_checkout_switch | bool in [true, false]
+      - lookup('env', 'HOME') | length > 0
+      - deploy_services | bool in [true, false]
+      - allow_env_sync | bool in [true, false]
+      - deploy_wait_timeout | int > 0
+      - backup_keep | int > 0
+      - backup_user | length > 0
+      - backup_cron_name | length > 0
+      - deploy_compose | length == 2
+    fail_msg: >-
+      Не заданы ansible_host, ansible_user, deploy_user, devops_repo_url,
+      devops_git_version или HOME на управляющей машине.
+    quiet: true
+
+- name: Остановить, если ветка не подставлена
+  ansible.builtin.fail:
+    msg: >-
+      devops_git_version всё ещё «{{ devops_git_version }}».
+      Подставьте ветку или тег, уже запушенный в GitHub.
+  when: devops_git_version is search('[<>]')
+
+- name: Проверить поддерживаемую ОС
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['distribution'] in supported_os
+      - ansible_facts['distribution_version'] in supported_os[ansible_facts['distribution']]
+    fail_msg: >-
+      Поддерживаются только Ubuntu {{ supported_os.Ubuntu | join(', ') }}
+      и Debian {{ supported_os.Debian | join(', ') }} —
+      для них есть официальный apt-репозиторий Docker.
+      Сейчас {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}.
+      Установка остановлена.
+    quiet: true
+
+- name: Проверить, что become дал права root
+  ansible.builtin.command: id -u
+  register: bootstrap_euid
+  changed_when: false
+  failed_when: bootstrap_euid.stdout != "0"

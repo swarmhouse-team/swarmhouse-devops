@@ -176,8 +176,25 @@ jobs:
             fi
           done
 
+          prom_port="$(python3 -c 'import pathlib; env={k.strip(): v.strip() for line in pathlib.Path(".env").read_text().splitlines() if line and not line.startswith("#") and "=" in line for k, v in [line.split("=", 1)]}; print(env.get("PROMETHEUS_PORT", "9090"))')"
+          pg_up_ok=0
+          for _ in $(seq 1 24); do
+            if python3 -c 'import json,sys,urllib.request; url="http://127.0.0.1:%s/api/v1/query?query=pg_up"%sys.argv[1]; body=json.load(urllib.request.urlopen(url, timeout=5)); values=[row.get("value",["",""])[1] for row in body.get("data",{}).get("result",[])]; sys.exit(0 if "1" in values else 1)' "$prom_port"; then
+              pg_up_ok=1
+              break
+            fi
+            sleep 5
+          done
+          if [[ "$pg_up_ok" != 1 ]]; then
+            echo "pg_up is not 1. Container status alone is not readiness."
+            echo "Previous commit: $PREVIOUS_SHA"
+            exit 1
+          fi
+
           docker compose -f docker-compose.monitoring.yml ps
           echo "Deployment completed: $DEPLOY_SHA"
+          echo "Automatic rollback is not performed. Previous commit: $PREVIOUS_SHA"
+          echo "This repository has no application migrations. Checking out the previous SHA does not undo schema changes made outside this repository."
           REMOTE
 
       - name: Remove SSH credentials

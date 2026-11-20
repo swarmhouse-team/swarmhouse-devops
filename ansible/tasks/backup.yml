@@ -1,0 +1,313 @@
+---
+- name: Прочитать scripts/backup-postgres.sh
+  ansible.builtin.slurp:
+    src: "{{ backup_script }}"
+  register: backup_script_slurp
+
+- name: Проверить контракт скрипта бэкапа
+  ansible.builtin.assert:
+    that:
+      - "'CONTAINER=\"postgres\"' in backup_script_text"
+      - "'BACKUP_ROOT=\"${SCRIPT_DIR}/../data/backup\"' in backup_script_text"
+      - "'flock -n 9' in backup_script_text"
+      - backup_script_keep | length > 0
+    fail_msg: >-
+      {{ backup_script }} не похож на ожидаемый скрипт.
+      Параллельный бэкап не создаю и cron не добавляю.
+    quiet: true
+  vars:
+    backup_script_text: "{{ backup_script_slurp.content | b64decode }}"
+    backup_script_keep: "{{ [backup_script_text | regex_search('(?m)^KEEP=(\\d+)$', '\\1')] | flatten | first | default('') }}"
+
+- name: Не менять KEEP в скрипте
+  ansible.builtin.fail:
+    msg: >-
+      В {{ backup_script }} KEEP={{ backup_script_keep }},
+      а backup_keep={{ backup_keep }}.
+      Скрипт не переписываю. Поставьте backup_keep={{ backup_script_keep }}
+      или меняйте ротацию отдельным коммитом в сам скрипт.
+  vars:
+    backup_script_text: "{{ backup_script_slurp.content | b64decode }}"
+    backup_script_keep: "{{ [backup_script_text | regex_search('(?m)^KEEP=(\\d+)$', '\\1')] | flatten | first | default('') }}"
+  when: backup_script_keep | int != backup_keep | int
+
+- name: Проверить, что скрипт исполняемый
+  ansible.builtin.stat:
+    path: "{{ backup_script }}"
+  register: backup_script_stat
+
+- name: Остановить, если скрипт принадлежит не deploy
+  ansible.builtin.fail:
+    msg: "{{ backup_script }} принадлежит {{ backup_script_stat.stat.pw_name }}. Владельца не меняю."
+  when: backup_script_stat.stat.pw_name != deploy_user
+
+- name: Дать скрипту бит выполнения
+  ansible.builtin.file:
+    path: "{{ backup_script }}"
+    mode: "0755"
+  when: not backup_script_stat.stat.executable
+
+- name: Установить cron
+  ansible.builtin.apt:
+    name: cron
+    state: present
+
+- name: Включить сервис cron
+  ansible.builtin.systemd:
+    name: cron
+    enabled: true
+    state: started
+
+- name: Найти чужие задания backup-postgres.sh
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - |
+        import pathlib, subprocess, sys
+        job = sys.argv[1]
+        script = "backup-postgres.sh"
+        marker = "#Ansible: " + job
+        foreign = []
+
+        def scan(label, text):
+            lines = text.splitlines()
+            for index, line in enumerate(lines):
+                if script not in line or line.lstrip().startswith("#"):
+                    continue
+                previous = lines[index - 1].strip() if index else ""
+                if previous != marker:
+                    foreign.append("%s: %s" % (label, line.strip()))
+
+        for user in sys.argv[2:]:
+            result = subprocess.run(
+                ["crontab", "-u", user, "-l"],
+                text=True,
+                capture_output=True,
+            )
+            if result.returncode == 0:
+                scan("crontab " + user, result.stdout)
+            elif result.returncode != 1:
+                sys.stderr.write(result.stderr)
+                sys.exit(result.returncode)
+
+        crontab = pathlib.Path("/etc/crontab")
+        if crontab.exists():
+            scan(str(crontab), crontab.read_text(errors="replace"))
+        for base in ("/etc/cron.d", "/etc/cron.hourly", "/etc/cron.daily", "/etc/cron.weekly", "/etc/cron.monthly"):
+            directory = pathlib.Path(base)
+            if not directory.is_dir():
+                continue
+            for entry in sorted(directory.iterdir()):
+                if entry.is_file() and script in entry.read_text(errors="replace"):
+                    foreign.append("%s содержит %s" % (entry, script))
+        print("\n".join(foreign))
+      - "{{ backup_cron_name }}"
+      - "{{ backup_user }}"
+      - root
+  register: backup_foreign_cron
+  changed_when: false
+
+- name: Остановить, если бэкап уже стоит в другом задании
+  ansible.builtin.fail:
+    msg: >-
+      Найдено другое задание с backup-postgres.sh. Второе не создаю.
+      Уберите или переименуйте его вручную, имя задачи playbook — {{ backup_cron_name }}.
+      {{ backup_foreign_cron.stdout }}
+  when: backup_foreign_cron.stdout | trim | length > 0
+
+- name: Проверить, запущен ли postgres
+  ansible.builtin.command:
+    argv: ["docker", "inspect", "--format", "{{ '{{' }}.State.Status{{ '}}' }}", postgres]
+  register: backup_postgres_state
+  changed_when: false
+  failed_when: false
+
+- name: Запомнить, можно ли делать тестовый дамп
+  ansible.builtin.set_fact:
+    postgres_running: "{{ backup_postgres_state.rc == 0 and backup_postgres_state.stdout == 'running' }}"
+    backup_test_ok: false
+    backup_cron_added: false
+
+- name: Не ставить cron, пока PostgreSQL не запущен
+  ansible.builtin.debug:
+    msg: >-
+      Контейнер postgres не запущен. Тестовый бэкап не делался,
+      задача {{ backup_cron_name }} не добавлена.
+      Запустите playbook с -e deploy_services=true или поднимите postgres и повторите.
+  when: not (postgres_running | bool)
+
+- name: Дождаться healthy у postgres
+  ansible.builtin.command:
+    argv:
+      - docker
+      - inspect
+      - --format
+      - "{{ '{{' }}if .State.Health{{ '}}' }}{{ '{{' }}.State.Health.Status{{ '}}' }}{{ '{{' }}else{{ '}}' }}none{{ '{{' }}end{{ '}}' }}"
+      - postgres
+  register: backup_postgres_health
+  changed_when: false
+  retries: "{{ (deploy_wait_timeout | int / 5) | round(0, 'ceil') | int }}"
+  delay: 5
+  until: stdout == 'healthy'
+  when: postgres_running | bool
+
+- name: Проверить утилиты скрипта
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /usr/bin/flock
+    - /usr/bin/sha256sum
+    - /usr/bin/find
+    - /usr/bin/head
+    - /usr/bin/du
+    - /bin/bash
+    - /usr/bin/docker
+  register: backup_tools
+  when: postgres_running | bool
+
+- name: Остановить, если утилиты бэкапа нет
+  ansible.builtin.fail:
+    msg: "Нет {{ item.item }}. Скрипт бэкапа её вызывает, cron не добавляю."
+  loop: "{{ backup_tools.results | default([]) }}"
+  when:
+    - postgres_running | bool
+    - not item.stat.exists
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Сделать один тестовый бэкап существующим скриптом
+  when: postgres_running | bool
+  block:
+    - name: Запустить scripts/backup-postgres.sh
+      ansible.builtin.command: "{{ backup_script }}"
+      args:
+        chdir: "{{ devops_checkout }}"
+      become_user: "{{ backup_user }}"
+      environment:
+        PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      register: backup_test
+      changed_when: true
+
+    - name: Найти каталог только что созданного бэкапа
+      ansible.builtin.set_fact:
+        backup_dir: "{{ backup_test.stdout | backup_dir_from_log }}"
+
+    - name: Остановить, если каталог бэкапа не распознан
+      ansible.builtin.fail:
+        msg: "Тестовый бэкап не сообщил каталог. Восстановление и cron не выполняю."
+      when: backup_dir | length == 0
+
+    - name: Восстановить дамп только в новую базу restore_test_
+      ansible.builtin.command:
+        argv:
+          - "{{ devops_checkout }}/scripts/restore-postgres-test.sh"
+          - "{{ backup_dir }}"
+      args:
+        chdir: "{{ devops_checkout }}"
+      become_user: "{{ backup_user }}"
+      environment:
+        PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      register: restore_test
+      changed_when: true
+
+    - name: Прочитать имя тестовой базы
+      ansible.builtin.set_fact:
+        restore_db: "{{ restore_test.stdout | restore_db_from_log }}"
+
+    - name: Остановить, если восстановление назвало рабочую базу
+      ansible.builtin.fail:
+        msg: "Скрипт не вернул базу с префиксом restore_test_. Рабочую базу не трогаю, cron не добавляю."
+      when: restore_db | length == 0
+
+    - name: Проверить, что SELECT открыл тестовую базу
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - postgres
+          - sh
+          - -ec
+          - 'psql -U "$POSTGRES_USER" -d "$1" -Atqc "SELECT current_database()"'
+          - sh
+          - "{{ restore_db }}"
+      register: restore_current
+      changed_when: false
+
+    - name: Остановить, если проверка попала не в тестовую базу
+      ansible.builtin.fail:
+        msg: "Проверка восстановления открыла другую базу. Рабочую базу не удаляю и cron не добавляю."
+      when: restore_current.stdout != restore_db
+
+    - name: Удалить только тестовую базу
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - postgres
+          - sh
+          - -ec
+          - 'dropdb -U "$POSTGRES_USER" --maintenance-db=postgres "$1"'
+          - sh
+          - "{{ restore_db }}"
+      when: restore_db is match('^restore_test_[a-z0-9_]+$')
+  rescue:
+    - name: Не добавлять cron после неудачного бэкапа
+      ansible.builtin.fail:
+        msg: >-
+          Тестовый бэкап не создан. Задача {{ backup_cron_name }} не добавлена.
+          {{ backup_test.stdout | default('') }}
+          {{ backup_test.stderr | default('') }}
+
+- name: Сообщить, что дамп не является проверкой восстановления
+  ansible.builtin.debug:
+    msg: >-
+      Тестовый дамп создан скриптом {{ backup_script }} и восстановлен в отдельную базу restore_test_.
+      Эта база удалена. Рабочая база не перезаписывалась.
+      Каталог {{ devops_checkout }}/data/backup, на этом же VPS. Внешней копии нет.
+  when:
+    - postgres_running | bool
+    - backup_test is defined
+    - backup_test is succeeded
+
+- name: Подготовить лог cron без секретов
+  ansible.builtin.file:
+    path: "{{ backup_log }}"
+    state: touch
+    owner: "{{ backup_user }}"
+    group: "{{ deploy_group }}"
+    mode: "0640"
+    modification_time: preserve
+    access_time: preserve
+  when:
+    - postgres_running | bool
+    - backup_test is defined
+    - backup_test is succeeded
+
+- name: Добавить единственную cron-задачу бэкапа
+  ansible.builtin.cron:
+    name: "{{ backup_cron_name }}"
+    user: "{{ backup_user }}"
+    minute: "{{ backup_minute }}"
+    hour: "{{ backup_hour }}"
+    day: "{{ backup_day }}"
+    month: "{{ backup_month }}"
+    weekday: "{{ backup_weekday }}"
+    job: >-
+      cd {{ devops_checkout }}
+      && PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      {{ backup_script }} >> {{ backup_log }} 2>&1
+    state: present
+  when:
+    - postgres_running | bool
+    - backup_test is defined
+    - backup_test is succeeded
+
+- name: Отметить результат бэкапа
+  ansible.builtin.set_fact:
+    backup_test_ok: true
+    backup_cron_added: true
+  when:
+    - postgres_running | bool
+    - backup_test is defined
+    - backup_test is succeeded

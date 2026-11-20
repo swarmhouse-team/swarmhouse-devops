@@ -1,0 +1,398 @@
+---
+- name: Пропустить запуск сервисов
+  ansible.builtin.set_fact:
+    deploy_applied: false
+  when: not (deploy_services | bool)
+
+- name: Зафиксировать, что запуск выключен
+  ansible.builtin.debug:
+    msg: >-
+      deploy_services=false: контейнеры не запускаются.
+      Чтобы поднять infrastructure_server и monitoring, повторите playbook с -e deploy_services=true.
+  when: not (deploy_services | bool)
+
+- name: Подготовить и запустить явный список сервисов
+  when: deploy_services | bool
+  block:
+    - name: Прочитать .env перед запуском
+      ansible.builtin.slurp:
+        src: "{{ devops_env_dir }}/.env"
+      register: deploy_dotenv_slurp
+      no_log: true
+      diff: false
+
+    - name: Разобрать теги образов
+      ansible.builtin.set_fact:
+        deploy_env: "{{ deploy_dotenv_slurp.content | b64decode | parse_env }}"
+      no_log: true
+
+    - name: Проверить обязательные значения .env
+      ansible.builtin.set_fact:
+        deploy_missing_env: "{{ deploy_missing_env | default([]) + [item] }}"
+      loop: "{{ deploy_image_env.values() | unique | list }}"
+      when: deploy_env[item] | default('') | length == 0
+
+    - name: Остановить, если в .env нет тегов образов
+      ansible.builtin.fail:
+        msg: "Перед запуском в .env нет значений: {{ deploy_missing_env | join(', ') }}."
+      when: deploy_missing_env | default([]) | length > 0
+
+    - name: Проверить файлы, без которых Compose не стартует
+      ansible.builtin.stat:
+        path: "{{ devops_checkout }}/{{ item }}"
+      loop:
+        - .env
+        - env/postgres.env
+        - env/redis.env
+        - env/grafana.env
+        - env/postgres-exporter.env
+        - env/redis-exporter.env
+        - conf/postgres/postgresql.conf
+        - conf/redis/redis.conf
+        - conf/prometheus/prometheus.yml
+        - conf/loki/config.yml
+        - conf/alloy/config.alloy
+        - conf/grafana/grafana.ini
+        - conf/grafana/dashboards
+      register: deploy_required_paths
+
+    - name: Остановить, если файла Compose не хватает
+      ansible.builtin.fail:
+        msg: "Нет {{ item.stat.path }}. Запуск не начинаю."
+      loop: "{{ deploy_required_paths.results }}"
+      when: not item.stat.exists
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Прочитать env перед изменением контейнеров
+      ansible.builtin.slurp:
+        src: "{{ devops_env_dir }}/{{ item }}"
+      loop:
+        - postgres.env
+        - postgres-exporter.env
+        - grafana.env
+      register: deploy_secret_slurp
+      no_log: true
+      diff: false
+
+    - name: Разобрать env перед запуском
+      ansible.builtin.set_fact:
+        deploy_postgres_env: "{{ (deploy_secret_slurp.results[0].content | b64decode | parse_env) }}"
+        deploy_exporter_env: "{{ (deploy_secret_slurp.results[1].content | b64decode | parse_env) }}"
+        deploy_grafana_env: "{{ (deploy_secret_slurp.results[2].content | b64decode | parse_env) }}"
+      no_log: true
+
+    - name: Собрать блокеры запуска без значений секретов
+      ansible.builtin.set_fact:
+        deploy_jira_problems: "{{ deploy_grafana_env | jira_problems }}"
+        deploy_grafana_blockers: "{{ deploy_grafana_env | grafana_blockers }}"
+        deploy_exporter_problem: >-
+          {{
+            deploy_postgres_env.POSTGRES_DB | default('')
+            | exporter_db_problem(deploy_exporter_env.DATA_SOURCE_URI | default(''))
+          }}
+
+    - name: Остановить, если пароль Grafana пустой или стандартный
+      ansible.builtin.fail:
+        msg: >-
+          grafana.env: admin_password_rejected.
+          Пароль не показываю и не заменяю. Задайте свой GF_SECURITY_ADMIN_PASSWORD.
+      when: "'admin_password_rejected' in deploy_grafana_blockers"
+
+    - name: Остановить, если Jira не задана извне
+      ansible.builtin.fail:
+        msg: >-
+          Перед запуском в grafana.env нет внешних значений: {{ deploy_jira_problems | join(', ') }}.
+          Контакт swarmhouse-jira в provisioning обязателен, отдельного выключателя в репозитории нет.
+          Фиктивный токен не записываю. Контейнеры не меняю.
+      when: deploy_jira_problems | length > 0
+
+    - name: Остановить, если вход Grafana или база exporter не согласованы
+      ansible.builtin.fail:
+        msg: >-
+          Запуск остановлен до изменения контейнеров:
+          Grafana {{ deploy_grafana_blockers | reject('equalto', 'admin_password_rejected') | list | join(', ') }};
+          exporter {{ deploy_exporter_problem }}.
+          Ожидаемая база — POSTGRES_DB из postgres.env.
+          Пароли не меняю. Повторите с -e allow_env_sync=true,
+          чтобы записать только DATA_SOURCE_URI, GF_AUTH_BASIC_ENABLED=true,
+          GF_SECURITY_COOKIE_SECURE=false и GF_AUTH_ANONYMOUS_ENABLED=false.
+      when:
+        - not (allow_env_sync | bool)
+        - >-
+          (deploy_grafana_blockers | reject('equalto', 'admin_password_rejected') | list | length > 0)
+          or deploy_exporter_problem | length > 0
+
+    - name: Записать DATA_SOURCE_URI по POSTGRES_DB
+      ansible.builtin.copy:
+        dest: "{{ devops_env_dir }}/postgres-exporter.env"
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_group }}"
+        mode: "0600"
+        content: >-
+          {{
+            (deploy_secret_slurp.results[1].content | b64decode)
+            | sync_env({'DATA_SOURCE_URI': deploy_postgres_env.POSTGRES_DB | datasource_uri})
+          }}
+      no_log: true
+      diff: false
+      when:
+        - allow_env_sync | bool
+        - deploy_exporter_problem | length > 0
+
+    - name: Записать только недостающие параметры входа Grafana
+      ansible.builtin.copy:
+        dest: "{{ devops_env_dir }}/grafana.env"
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_group }}"
+        mode: "0600"
+        content: >-
+          {{
+            (deploy_secret_slurp.results[2].content | b64decode)
+            | sync_env(deploy_grafana_blockers | grafana_sync_updates)
+          }}
+      no_log: true
+      diff: false
+      when:
+        - allow_env_sync | bool
+        - deploy_grafana_blockers | grafana_sync_updates | length > 0
+
+    - name: Повторно прочитать env после синхронизации
+      ansible.builtin.slurp:
+        src: "{{ devops_env_dir }}/{{ item }}"
+      loop:
+        - postgres.env
+        - postgres-exporter.env
+        - grafana.env
+      register: deploy_secret_slurp_after
+      no_log: true
+      diff: false
+      when: allow_env_sync | bool
+
+    - name: Повторно проверить параметры после синхронизации
+      ansible.builtin.set_fact:
+        deploy_postgres_env: "{{ (deploy_secret_slurp_after.results[0].content | b64decode | parse_env) }}"
+        deploy_exporter_env: "{{ (deploy_secret_slurp_after.results[1].content | b64decode | parse_env) }}"
+        deploy_grafana_env: "{{ (deploy_secret_slurp_after.results[2].content | b64decode | parse_env) }}"
+      no_log: true
+      when: allow_env_sync | bool
+
+    - name: Остановить, если после синхронизации параметры всё ещё расходятся
+      ansible.builtin.fail:
+        msg: >-
+          После allow_env_sync остались блокеры Grafana
+          {{ deploy_grafana_env | grafana_blockers | reject('equalto', 'admin_password_rejected') | list | join(', ') }}
+          и exporter
+          {{ deploy_postgres_env.POSTGRES_DB | default('') | exporter_db_problem(deploy_exporter_env.DATA_SOURCE_URI | default('')) }}.
+          Контейнеры не меняю.
+      when:
+        - allow_env_sync | bool
+        - >-
+          (deploy_grafana_env | grafana_blockers | reject('equalto', 'admin_password_rejected') | list | length > 0)
+          or (deploy_postgres_env.POSTGRES_DB | default('') | exporter_db_problem(deploy_exporter_env.DATA_SOURCE_URI | default('')) | length > 0)
+
+    - name: Проверить конфигурацию Compose
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --project-directory
+          - "{{ devops_checkout }}"
+          - --project-name
+          - "{{ item.project_name }}"
+          - -f
+          - "{{ devops_checkout }}/{{ item.file }}"
+          - config
+          - --quiet
+      loop: "{{ deploy_compose }}"
+      loop_control:
+        label: "{{ item.project_name }}"
+      changed_when: false
+
+    - name: Посчитать хеш конфигурации сервисов
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --project-directory
+          - "{{ devops_checkout }}"
+          - --project-name
+          - "{{ item.project_name }}"
+          - -f
+          - "{{ devops_checkout }}/{{ item.file }}"
+          - config
+          - --hash
+          - "*"
+      loop: "{{ deploy_compose }}"
+      loop_control:
+        label: "{{ item.project_name }}"
+      register: deploy_hashes
+      changed_when: false
+      no_log: true
+
+    - name: Собрать хеши сервисов
+      ansible.builtin.set_fact:
+        deploy_hash_map: >-
+          {{
+            deploy_hash_map | default({}) | combine(dict(item.stdout_lines | map('split')))
+          }}
+      loop: "{{ deploy_hashes.results }}"
+      no_log: true
+
+    - name: Собрать явный список сервисов
+      ansible.builtin.set_fact:
+        deploy_targets: "{{ deploy_targets | default([]) + [{'service': item.1, 'project': item.0.project_name, 'file': item.0.file}] }}"
+      loop: "{{ deploy_compose | subelements('services') }}"
+
+    - name: Прочитать уже существующие контейнеры по фиксированному имени
+      ansible.builtin.command:
+        argv:
+          - docker
+          - inspect
+          - --format
+          - "{{ '{{' }}.State.Status{{ '}}' }}|{{ '{{' }}.State.ExitCode{{ '}}' }}|{{ '{{' }}index .Config.Labels \"com.docker.compose.project\"{{ '}}' }}|{{ '{{' }}index .Config.Labels \"com.docker.compose.project.working_dir\"{{ '}}' }}|{{ '{{' }}index .Config.Labels \"com.docker.compose.service\"{{ '}}' }}|{{ '{{' }}.Config.Image{{ '}}' }}|{{ '{{' }}index .Config.Labels \"com.docker.compose.config-hash\"{{ '}}' }}"
+          - "{{ item.service }}"
+      loop: "{{ deploy_targets }}"
+      loop_control:
+        label: "{{ item.service }}"
+      register: deploy_inspect
+      changed_when: false
+      failed_when: false
+
+    - name: Составить план без секретов
+      ansible.builtin.set_fact:
+        deploy_plan: "{{ deploy_plan | default([]) + [plan_line] }}"
+        deploy_conflicts: "{{ deploy_conflicts | default([]) + ([conflict_line] if (is_conflict | bool) else []) }}"
+      loop: "{{ deploy_inspect.results }}"
+      loop_control:
+        label: "{{ item.item.service }}"
+      vars:
+        fields: "{{ item.stdout.split('|') if item.rc == 0 else [] }}"
+        status: "{{ fields[0] | default('') }}"
+        exit_code: "{{ fields[1] | default('') }}"
+        project: "{{ fields[2] | default('') }}"
+        workdir: "{{ fields[3] | default('') }}"
+        service_label: "{{ fields[4] | default('') }}"
+        image: "{{ fields[5] | default('') }}"
+        config_hash: "{{ fields[6] | default('') }}"
+        expected_image: "{{ deploy_image_prefix[item.item.service] }}:{{ deploy_env[deploy_image_env[item.item.service]] }}"
+        expected_hash: "{{ deploy_hash_map[item.item.service] | default('') }}"
+        image_ok: "{{ image in [expected_image, 'docker.io/' ~ expected_image, 'docker.io/library/' ~ expected_image] }}"
+        labels_ok: >-
+          {{
+            project == item.item.project
+            and (workdir | regex_replace('/$', '')) == devops_checkout
+            and service_label == item.item.service
+          }}
+        is_conflict: >-
+          {{
+            item.rc == 0 and (
+              not (labels_ok | bool)
+              or not (image_ok | bool)
+              or config_hash != expected_hash
+              or (item.item.service == 'alloy-init' and status == 'exited' and exit_code != '0')
+              or status in ['paused', 'dead', 'removing']
+            )
+          }}
+        plan_line: >-
+          {{
+            item.item.service ~ ': контейнера нет, будет создан в проекте ' ~ item.item.project
+            if item.rc != 0
+            else item.item.service ~ ': ' ~ status ~ ', проект ' ~ project ~ ', каталог ' ~ workdir ~ ', образ ' ~ image
+          }}
+        conflict_line: >-
+          {{
+            item.item.service ~ ' конфликтует с ' ~ item.item.project
+            ~ ' (' ~ devops_checkout ~ ', ' ~ expected_image ~ '). Сейчас: проект '
+            ~ project ~ ', каталог ' ~ workdir ~ ', сервис ' ~ service_label
+            ~ ', образ ' ~ image ~ ', статус ' ~ status ~ ' ' ~ exit_code
+            ~ ('; хеш Compose не совпадает с контейнером' if config_hash != expected_hash else '')
+          }}
+
+    - name: Показать план запуска
+      ansible.builtin.debug:
+        msg: "{{ deploy_plan }}"
+
+    - name: Остановить при конфликте существующей конфигурации
+      ansible.builtin.fail:
+        msg: >-
+          Контейнеры не меняю: {{ deploy_conflicts | join(' ; ') }}.
+          compose down, удаление volumes и пересоздание не выполнялись.
+          Другой project name и другой каталог не используются.
+      when: deploy_conflicts | length > 0
+
+    - name: Проверить внешние сети
+      ansible.builtin.command:
+        argv: ["docker", "network", "inspect", "--format", "{{ '{{' }}.Driver{{ '}}' }}", "{{ item }}"]
+      loop: "{{ deploy_networks }}"
+      register: deploy_network_inspect
+      changed_when: false
+      failed_when: false
+
+    - name: Остановить, если сеть есть, но это не bridge
+      ansible.builtin.fail:
+        msg: "Сеть {{ item.item }} уже есть с драйвером {{ item.stdout }}. Её не меняю."
+      loop: "{{ deploy_network_inspect.results }}"
+      when:
+        - item.rc == 0
+        - item.stdout != 'bridge'
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Создать отсутствующие сети infra и monitoring
+      community.docker.docker_network:
+        name: "{{ item.item }}"
+        driver: bridge
+        state: present
+      loop: "{{ deploy_network_inspect.results }}"
+      when: item.rc != 0
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Проверить каталоги данных
+      ansible.builtin.stat:
+        path: "{{ devops_checkout }}/{{ item }}"
+      loop: "{{ deploy_data_dirs }}"
+      register: deploy_data_stats
+
+    - name: Остановить, если вместо каталога данных лежит файл
+      ansible.builtin.fail:
+        msg: "{{ item.stat.path }} существует и это не каталог. Не удаляю."
+      loop: "{{ deploy_data_stats.results }}"
+      when:
+        - item.stat.exists
+        - not item.stat.isdir
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Создать только отсутствующие каталоги данных
+      ansible.builtin.file:
+        path: "{{ devops_checkout }}/{{ item.item }}"
+        state: directory
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_group }}"
+        mode: "0750"
+      loop: "{{ deploy_data_stats.results }}"
+      when: not item.stat.exists
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Запустить postgres и redis
+      ansible.builtin.include_tasks: tasks/deploy_up.yml
+      vars:
+        compose_project: "{{ deploy_compose[0] }}"
+
+    - name: Создать объекты PostgreSQL для exporter
+      ansible.builtin.include_tasks: tasks/postgres_exporter_role.yml
+
+    - name: Запустить мониторинг
+      ansible.builtin.include_tasks: tasks/deploy_up.yml
+      vars:
+        compose_project: "{{ deploy_compose[1] }}"
+
+    - name: Проверить метрики PostgreSQL
+      ansible.builtin.include_tasks: tasks/postgres_metrics.yml
+
+    - name: Отметить, что запуск выполнен
+      ansible.builtin.set_fact:
+        deploy_applied: true

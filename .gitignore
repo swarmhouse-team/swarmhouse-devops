@@ -20,6 +20,11 @@
 # Local secret files; keep public templates outside these folders
 /secrets/
 /.ssh/
+/.swarmhouse/
+/ansible/inventory.yml
+/ansible/inventory.ini
+/ansible/inventory.test.yml
+/ansible/*.retry
 *.key
 *.p12
 *.pfx
