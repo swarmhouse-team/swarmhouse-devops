@@ -1,0 +1,160 @@
+---
+- name: Проверить тег образа PostgreSQL
+  ansible.builtin.assert:
+    that:
+      - deploy_env.POSTGRES_TAG | image_tag_ok
+    fail_msg: >-
+      POSTGRES_TAG нельзя использовать как тег образа.
+      data/postgres не меняю.
+    quiet: true
+
+- name: Зафиксировать образ PostgreSQL
+  ansible.builtin.set_fact:
+    postgres_image: "{{ deploy_image_prefix.postgres }}:{{ deploy_env.POSTGRES_TAG }}"
+
+- name: Проверить, есть ли образ PostgreSQL локально
+  ansible.builtin.command:
+    argv:
+      - docker
+      - image
+      - inspect
+      - --format
+      - "{{ '{{' }}.Id{{ '}}' }}"
+      - "{{ postgres_image }}"
+  register: postgres_image_present
+  changed_when: false
+  failed_when: false
+
+- name: Скачать отсутствующий образ PostgreSQL
+  ansible.builtin.command:
+    argv:
+      - docker
+      - pull
+      - "{{ postgres_image }}"
+  when: postgres_image_present.rc != 0
+
+- name: Прочитать UID и GID пользователя postgres из образа
+  ansible.builtin.command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - --network
+      - none
+      - --entrypoint
+      - id
+      - "{{ postgres_image }}"
+      - postgres
+  register: postgres_image_id
+  changed_when: false
+
+- name: Прочитать PGDATA из образа
+  ansible.builtin.command:
+    argv:
+      - docker
+      - image
+      - inspect
+      - --format
+      - "{{ '{{' }}range .Config.Env{{ '}}' }}{{ '{{' }}println .{{ '}}' }}{{ '{{' }}end{{ '}}' }}"
+      - "{{ postgres_image }}"
+  register: postgres_image_env
+  changed_when: false
+
+- name: Зафиксировать пользователя и PGDATA образа
+  ansible.builtin.set_fact:
+    postgres_image_user: "{{ postgres_image_id.stdout | parse_posix_id }}"
+    postgres_pgdata: "{{ postgres_image_env.stdout | pgdata_from_env }}"
+
+- name: Проверить корень data/postgres
+  ansible.builtin.stat:
+    path: "{{ devops_checkout }}/data/postgres"
+  register: postgres_data_stat
+
+- name: Остановить, если data/postgres не каталог
+  ansible.builtin.fail:
+    msg: >-
+      {{ devops_checkout }}/data/postgres существует и это не каталог.
+      Не удаляю и владельца не меняю.
+  when:
+    - postgres_data_stat.stat.exists
+    - (not postgres_data_stat.stat.isdir) or (postgres_data_stat.stat.islnk | bool)
+
+- name: Решить, менять ли только корень data/postgres
+  ansible.builtin.set_fact:
+    postgres_dir_plan: >-
+      {{
+        (postgres_data_stat.stat.exists | bool) | postgres_dir_plan(
+          postgres_data_stat.stat.uid | default(0),
+          postgres_data_stat.stat.gid | default(0),
+          postgres_data_stat.stat.mode | default(''),
+          postgres_image_user.uid,
+          postgres_image_user.gid
+        )
+      }}
+
+- name: Создать корень data/postgres или выставить ему режим 0700
+  ansible.builtin.file:
+    path: "{{ devops_checkout }}/data/postgres"
+    state: directory
+    mode: "0700"
+    recurse: false
+
+- name: Назначить корень data/postgres пользователю из образа
+  ansible.builtin.command:
+    argv:
+      - chown
+      - "{{ postgres_image_user.uid }}:{{ postgres_image_user.gid }}"
+      - "{{ devops_checkout }}/data/postgres"
+  when: postgres_dir_plan.chown | bool
+  changed_when: true
+
+- name: Перечитать корень data/postgres
+  ansible.builtin.stat:
+    path: "{{ devops_checkout }}/data/postgres"
+  register: postgres_data_ready
+
+- name: Сверить корень data/postgres с пользователем образа
+  ansible.builtin.set_fact:
+    postgres_dir_after: >-
+      {{
+        (postgres_data_ready.stat.exists | bool) | postgres_dir_plan(
+          postgres_data_ready.stat.uid | default(0),
+          postgres_data_ready.stat.gid | default(0),
+          postgres_data_ready.stat.mode | default(''),
+          postgres_image_user.uid,
+          postgres_image_user.gid
+        )
+      }}
+
+- name: Остановить, если корень data/postgres снова не принадлежит пользователю образа
+  ansible.builtin.fail:
+    msg: >-
+      {{ devops_checkout }}/data/postgres принадлежит
+      {{ postgres_data_ready.stat.uid | default('нет') }}:{{ postgres_data_ready.stat.gid | default('нет') }},
+      режим {{ postgres_data_ready.stat.mode | default('нет') }},
+      а образ {{ postgres_image }} ожидает
+      {{ postgres_image_user.uid }}:{{ postgres_image_user.gid }} и 0700.
+      Содержимое каталога не менял.
+  when: postgres_dir_after.action != 'keep'
+
+- name: Проверить проход к PGDATA до запуска контейнера
+  ansible.builtin.command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - --network
+      - none
+      - --user
+      - "{{ postgres_image_user.uid }}:{{ postgres_image_user.gid }}"
+      - --mount
+      - "type=bind,source={{ devops_checkout }}/data/postgres,target=/var/lib/postgresql,readonly"
+      - --entrypoint
+      - sh
+      - "{{ postgres_image }}"
+      - -c
+      - >-
+        test -x /var/lib/postgresql
+        && case "$PGDATA" in /var/lib/postgresql/*) ;; *) exit 2 ;; esac
+        && if [ -e "$PGDATA" ]; then test -d "$PGDATA" && test -x "$PGDATA"; fi
+  changed_when: false

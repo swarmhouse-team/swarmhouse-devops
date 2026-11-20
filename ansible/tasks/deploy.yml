@@ -99,13 +99,13 @@
           Пароль не показываю и не заменяю. Задайте свой GF_SECURITY_ADMIN_PASSWORD.
       when: "'admin_password_rejected' in deploy_grafana_blockers"
 
-    - name: Остановить, если Jira не задана извне
+    - name: Остановить, если в grafana.env осталась заглушка Jira
       ansible.builtin.fail:
         msg: >-
-          Перед запуском в grafana.env нет внешних значений: {{ deploy_jira_problems | join(', ') }}.
-          Контакт swarmhouse-jira в provisioning обязателен, отдельного выключателя в репозитории нет.
-          Фиктивный токен не записываю. Контейнеры не меняю.
-      when: deploy_jira_problems | length > 0
+          В grafana.env непустое значение {{ deploy_jira_problems | join(', ') }} является заглушкой.
+          Его не заменяю и не показываю. Контейнеры не меняю.
+      when: >-
+        deploy_jira_problems | reject('in', deploy_grafana_env | jira_missing) | list | length > 0
 
     - name: Остановить, если вход Grafana или база exporter не согласованы
       ansible.builtin.fail:
@@ -190,6 +190,9 @@
         - >-
           (deploy_grafana_env | grafana_blockers | reject('equalto', 'admin_password_rejected') | list | length > 0)
           or (deploy_postgres_env.POSTGRES_DB | default('') | exporter_db_problem(deploy_exporter_env.DATA_SOURCE_URI | default('')) | length > 0)
+
+    - name: Запросить недостающие значения Jira
+      ansible.builtin.include_tasks: tasks/jira_prompt.yml
 
     - name: Проверить конфигурацию Compose
       ansible.builtin.command:
@@ -365,22 +368,38 @@
       loop_control:
         label: "{{ item.item }}"
 
-    - name: Создать только отсутствующие каталоги данных
-      ansible.builtin.file:
-        path: "{{ devops_checkout }}/{{ item.item }}"
-        state: directory
-        owner: "{{ deploy_user }}"
-        group: "{{ deploy_group }}"
-        mode: "0750"
-      loop: "{{ deploy_data_stats.results }}"
-      when: not item.stat.exists
+    - name: Подготовить корни данных Redis, Prometheus и Grafana
+      ansible.builtin.include_tasks: tasks/service_datadir.yml
+      loop:
+        - name: redis
+          image: "{{ deploy_image_prefix.redis }}:{{ deploy_env.REDIS_TAG }}"
+          tag: "{{ deploy_env.REDIS_TAG }}"
+          host: data/redis
+          mount: /data
+        - name: prometheus
+          image: "{{ deploy_image_prefix.prometheus }}:{{ deploy_env.PROMETHEUS_VERSION }}"
+          tag: "{{ deploy_env.PROMETHEUS_VERSION }}"
+          host: data/prometheus
+          mount: /prometheus
+        - name: grafana
+          image: "{{ deploy_image_prefix.grafana }}:{{ deploy_env.GRAFANA_VERSION }}"
+          tag: "{{ deploy_env.GRAFANA_VERSION }}"
+          host: data/grafana
+          mount: /var/lib/grafana
       loop_control:
-        label: "{{ item.item }}"
+        loop_var: data_mount
+        label: "{{ data_mount.host }}"
+
+    - name: Подготовить корень данных PostgreSQL
+      ansible.builtin.include_tasks: tasks/postgres_datadir.yml
 
     - name: Запустить postgres и redis
       ansible.builtin.include_tasks: tasks/deploy_up.yml
       vars:
         compose_project: "{{ deploy_compose[0] }}"
+
+    - name: Проверить доступ postgres к PGDATA
+      ansible.builtin.include_tasks: tasks/postgres_access.yml
 
     - name: Создать объекты PostgreSQL для exporter
       ansible.builtin.include_tasks: tasks/postgres_exporter_role.yml

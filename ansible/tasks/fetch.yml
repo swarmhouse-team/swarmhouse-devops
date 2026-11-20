@@ -23,13 +23,21 @@
     msg: >-
       Локальный файл {{ local_vps_dir }}/env/{{ item.0.item.secret }}
       уже есть и не совпадает с {{ devops_env_dir }}/{{ item.0.item.secret }}.
-      Файл не перезаписываю.
+      Ни локальную, ни серверную копию не перезаписываю. Содержимое не показываю.
+      Возможная причина: сервер пересоздан, а {{ local_vps_dir }} остался от прошлого окружения.
+      Новое окружение: отдельный inventory_hostname или local_vps_dir.
+      Повторный запуск должен использовать тот же каталог, без новой метки времени на каждый старт.
+      Прежнее окружение автоматически не восстанавливается. Верните серверные env
+      из своей резервной копии и отдельно проверьте их соответствие данным БД.
   loop: "{{ secret_env_final.results | zip(local_env_stats.results) | list }}"
   loop_control:
     label: "{{ item.0.item.secret }}"
-  when:
-    - item.1.stat.exists
-    - item.0.stat.checksum != item.1.stat.checksum
+  when: >-
+    (item.0.stat.exists | bool) | env_copy_action(
+      item.1.stat.exists | bool,
+      item.0.stat.checksum | default(''),
+      item.1.stat.checksum | default('')
+    ) == 'conflict'
 
 # fetch выполняется на целевой VM. Локальный каталог и сверка checksum выше идут через delegate_to: localhost.
 - name: Забрать отсутствующие env на управляющую машину

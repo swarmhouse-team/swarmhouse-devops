@@ -22,7 +22,7 @@ Ansible запускается с Linux. На Windows это WSL. Отдельн
 - `/opt/swarmhouse`
 - `/opt/swarmhouse/swarmhouse-devops` — checkout `https://github.com/swarmhouse-team/swarmhouse-devops.git`
 - `/opt/swarmhouse/secrets/env` — канонические env, режим `0700`, владелец `deploy`
-- `/opt/swarmhouse/secrets/github-actions` — ключ Actions, режим `0700`, владелец `root`
+- `/opt/swarmhouse/secrets/github-actions` — каталог legacy-ключей Actions, режим `0700`, владелец `root`. Новый приватный ключ сюда не кладётся
 
 Compose по-прежнему читает `.env` и `env/*.env` внутри checkout. Эти пути — ссылки на `/opt/swarmhouse/secrets/env`. Отслеживаемые файлы секретов не получают. Если такой путь уже есть и это не ссылка на каталог секретов и не тот же файл, playbook останавливается.
 
@@ -110,7 +110,7 @@ ansible-playbook -i inventory.test.yml bootstrap.yml --ask-become-pass
 ansible-playbook -i inventory.test.yml bootstrap.yml --ask-become-pass -e allow_env_sync=true
 ```
 
-Перед включением запуска вручную допишите в `/opt/swarmhouse/secrets/env/grafana.env` реальные `JIRA_USER` и `JIRA_API_TOKEN`. Затем:
+При `deploy_services=true` и одном хосте `pause` спрашивает только пустые `JIRA_USER` и `JIRA_API_TOKEN` в терминале процесса `ansible-playbook`. Токен не отображается. Уже заполненные значения не меняются. Если этот stdin не интерактивен, `pause` не ждёт и playbook останавливается до записи. Для нескольких хостов запрос не задаётся. В обоих случаях значения должны уже быть в `grafana.env`. Затем:
 
 ```bash
 ansible-playbook -i inventory.test.yml bootstrap.yml --ask-become-pass -e deploy_services=true
@@ -153,7 +153,7 @@ docker compose -f docker-compose.monitoring.yml up -d
 - `infrastructure_server` из `docker-compose.yml`: `postgres`, `redis`. Ожидание healthcheck, таймаут `deploy_wait_timeout` (120 секунд).
 - `monitoring` из `docker-compose.monitoring.yml`: `alloy-init`, `prometheus`, `grafana`, `loki`, `alloy`, `cadvisor`, `node-exporter`, `postgres-exporter`, `redis-exporter`. Profiles в этих файлах нет. `alloy-init` считается готовым при `exited 0`, остальные — когда контейнер `running`.
 
-Перед изменением контейнеров playbook проверяет обязательные параметры и печатает план. `JIRA_API_TOKEN` и `JIRA_USER` должны уже лежать в `grafana.env`: контакт `swarmhouse-jira` в provisioning без них не работает, отдельного выключателя Jira в репозитории нет. Пустые значения и заглушки example останавливают запуск до Docker. Playbook эти значения не придумывает.
+Перед изменением контейнеров playbook проверяет обязательные параметры и печатает план. Контакт `swarmhouse-jira` обязателен, отдельного выключателя Jira нет. Пустые `JIRA_USER` и `JIRA_API_TOKEN` запрашиваются в терминале одного хоста. Пустой ввод и заглушки example останавливают playbook до записи файла и до Docker. Уже заданные непустые значения не заменяются.
 
 Если `DATA_SOURCE_URI` не совпадает с `POSTGRES_DB`, анонимный доступ включён, basic-вход выключен или `GF_SECURITY_COOKIE_SECURE=true` при HTTP, запуск тоже останавливается. `-e allow_env_sync=true` переписывает только эти параметры и сохраняет остальные строки, включая пароли. Стандартный или пустой пароль Grafana синхронизация не заменяет.
 
@@ -161,26 +161,42 @@ docker compose -f docker-compose.monitoring.yml up -d
 
 Если контейнер с тем же именем уже принадлежит другому project name, другому каталогу или его хеш Compose не совпадает с файлом, запуск останавливается. `compose down`, удаление volumes, `--force-recreate` и обновление уже скачанных образов не выполняются. Отсутствующий локальный образ может быть скачан один раз (`pull: missing`). При ошибке в отчёт попадает `docker compose ps` (имя и статус), без env и логов. Миграций приложения в этом репозитории нет, и playbook их не запускает.
 
-Для старта создаются только отсутствующие сети `infra` и `monitoring` и пустые каталоги `data/postgres`, `data/redis`, `data/prometheus`, `data/grafana`. Существующие каталоги данных не переписываются.
+Для старта создаются только отсутствующие сети `infra` и `monitoring`. Корни `data/postgres`, `data/redis`, `data/prometheus` и `data/grafana` не принадлежат `deploy`. UID и GID берутся из пользователя фактически используемого образа: у PostgreSQL это `postgres`, у остальных — пользователь по умолчанию образа. Режим корня `0700`. Рекурсивный chown не делается, пути mount и `PGDATA` не меняются. Повторный запуск не возвращает эти корни пользователю `deploy`. Перед стартом playbook проверяет, что пользователь образа может пройти в свой каталог; для PostgreSQL проверяется и путь до `PGDATA`.
 
 Playbook на боевой VPS запускает человек. Из среды разработки он сам не стартует.
 
 ## 5. Куда попадают ключ и env
 
-На VPS приватный ключ временно лежит в `/opt/swarmhouse/secrets/github-actions/id_ed25519` (`0600`, root). Публичный — рядом, в `id_ed25519.pub`, и в `~deploy/.ssh/authorized_keys`. Старые строки `authorized_keys` не удаляются.
-
-На управляющей машине копии лежат вне репозитория:
+Канонический приватный ключ Actions лежит только на управляющей машине:
 
 ```text
 $HOME/.swarmhouse/vps/<имя хоста из inventory>/github-actions/id_ed25519
-$HOME/.swarmhouse/vps/<имя хоста из inventory>/env/
-
-Для тестовой VM имя хоста — `swarmhouse-test`, каталог `$HOME/.swarmhouse/vps/swarmhouse-test/`. Боевой хост в этот каталог не пишется.
 ```
 
-Каталог `0700`, файлы `0600`. Если локальный файл уже есть и отличается, playbook останавливается и ничего не перезаписывает. Повторный запуск не создаёт новую пару и новые пароли.
+Каталог `0700`, приватный файл `0600`. Пара создаётся локально, только если этого файла ещё нет. Повторный запуск ту же пару не перезаписывает. На VPS в штатном сценарии приватный ключ не копируется. Публичная часть добавляется в `~deploy/.ssh/authorized_keys` без `exclusive`, остальные ключи deploy сохраняются. Ключ администратора, которым Ansible входит на сервер, не меняется.
 
-Если публичный ключ уже есть, а приватный на VPS удалён cleanup-ом, это нормальное состояние. Новая пара не генерируется. Если приватный файл есть, а публичного нет, playbook останавливается и ключ не ротирует.
+`DEPLOY_SSH_KEY` — содержимое этого локального приватного файла. `DEPLOY_KNOWN_HOSTS` — host key SSH самого сервера. Это разные ключи. Установка публичного ключа не означает, что вход Actions уже проверен.
+
+Тестовый хост `swarmhouse-test` и боевой хост получают разные каталоги, потому что в путь входит `inventory_hostname`. Одинаковый `local_vps_dir` у двух хостов одного запуска playbook останавливает.
+
+Новое независимое тестовое окружение — это другой каталог, а не новая метка времени на каждом запуске. Либо другое имя хоста в inventory, либо свой `local_vps_dir` в host vars. Старые артефакты можно убрать из рабочего пути вручную, не удаляя их:
+
+```bash
+mv "$HOME/.swarmhouse/vps/swarmhouse-test" \
+  "$HOME/.swarmhouse/vps/swarmhouse-test.previous"
+```
+
+Следующие повторы снова пишут в `swarmhouse-test`, а не в каталог с датой.
+
+Если локально есть только `.pub`, playbook останавливается и новую пару не создаёт. Если приватный файл есть, а `.pub` нет, публичная часть восстанавливается из приватного ключа, сам приватный файл не меняется. Несовпадение типа или key material останавливает запуск. Разный комментарий при том же ключе конфликтом не считается.
+
+Потеря каталога на controller не лечится скачиванием ключа с VPS. Нужна защищённая резервная копия либо отдельное решение о смене ключа. После смены обновите `DEPLOY_SSH_KEY` и проверьте вход до отзыва старого ключа.
+
+Старые установки могли оставить `/opt/swarmhouse/secrets/github-actions/id_ed25519` и `id_ed25519.pub`. Если локальная пара уже есть и валидна, она каноническая: bootstrap ставит её публичный ключ и не читает, не скачивает, не перезаписывает и не удаляет legacy-файлы. Их отличие запуск не останавливает. В отчёте они перечислены. Дальше вручную: проверить вход, при необходимости обновить `DEPLOY_SSH_KEY` и только затем отзывать старый ключ.
+
+Если локального приватного ключа нет, а legacy-файлы на VPS есть, новая пара не создаётся. Playbook не выбирает за оператора. Восстановление — положить сохранённую пару в каталог controller и запустить bootstrap снова. Новая идентичность — отдельное решение вне этого запуска: пока legacy-файлы на месте, генерация не начнётся.
+
+Локальные копии env лежат в `$HOME/.swarmhouse/vps/<имя хоста>/env/`. Повторный bootstrap не перезаписывает ни серверные env, ни эти копии. Расхождение checksum — отказ. Если серверного файла нет, а локальная копия есть, новые пароли не генерируются. Автоматического восстановления env из локальной копии нет: файлы нужно вернуть в `/opt/swarmhouse/secrets/env` своей резервной копией до bootstrap. Совпадение env с данными уже инициализированной БД эта операция не проверяет.
 
 ## 6. Что внести в GitHub вручную
 
@@ -196,7 +212,7 @@ Playbook в GitHub ничего не отправляет. Для `.github/workf
 
 `DEPLOY_KNOWN_HOSTS` снимается на управляющей машине отдельно, например `ssh-keyscan -p <порт> <хост>`. Playbook это не делает и вход Actions не проверяет.
 
-Перед `deploy_services=true` в `grafana.env` вручную добавляются `JIRA_API_TOKEN` и `JIRA_USER`. Заглушки `api-token` и `email-jira` рабочими не являются. Если они уже лежат в существующем env, playbook останавливается и файл не переписывает. `DEPLOY_KNOWN_HOSTS` снимается с машины, которая уже доверяет ключу хоста, и сверяется с отпечатком в панели провайдера. Команда: `ssh-keyscan -p <порт> <хост>`. В workflow остаётся `StrictHostKeyChecking=yes`.
+Перед `deploy_services=true` пустые `JIRA_API_TOKEN` и `JIRA_USER` можно ввести в терминале одного хоста. Заглушки `api-token` и `email-jira` рабочими не являются. Если они уже лежат в существующем env, playbook останавливается и файл не переписывает. `DEPLOY_KNOWN_HOSTS` снимается с машины, которая уже доверяет ключу хоста, и сверяется с отпечатком в панели провайдера. Команда: `ssh-keyscan -p <порт> <хост>`. В workflow остаётся `StrictHostKeyChecking=yes`.
 
 GitHub-hosted runner не открывает тестовую VM `127.0.0.1:2222`. CD против `swarmhouse-test` с этого runner не проверяется. Первый bootstrap Actions не требует.
 
@@ -213,19 +229,19 @@ ssh -i "$HOME/.swarmhouse/vps/<имя хоста из inventory>/github-actions/
 
 Успешный вход этим ключом playbook не обещает: это отдельная проверка. Новая сессия нужна, чтобы группа `docker` была видна процессу.
 
-## 8. Удалить временный ключ с VPS
+## 8. Убрать legacy-приватный ключ с VPS
 
-Сначала сохраните локальную копию и проверьте вход. Затем из каталога `ansible`:
+Штатный bootstrap этот файл не создаёт и не удаляет. Cleanup нужен только если после прежней схемы или миграции на диске остался `/opt/swarmhouse/secrets/github-actions/id_ed25519`. Сначала проверьте вход локальным ключом и обновите `DEPLOY_SSH_KEY`, если каноническая пара менялась. Затем из каталога `ansible`:
 
 ```bash
-ansible-playbook cleanup-actions-key.yml --ask-become-pass -e confirm_actions_key_cleanup=true
+ansible-playbook -i inventory.test.yml cleanup-actions-key.yml --ask-become-pass -e confirm_actions_key_cleanup=true
 ```
 
-Удаляется только `/opt/swarmhouse/secrets/github-actions/id_ed25519`. Публичный ключ и `authorized_keys` остаются. Если локальной копии нет или она не совпадает с серверной, файл на VPS не удаляется. Обычный `bootstrap.yml` cleanup не вызывает. Удаление — это `unlink`, не обещание затереть блоки на диске.
+Для боевого inventory подставьте `inventory.yml`. Удаляется только серверный приватный файл, и только если его байты совпадают с локальным. `authorized_keys` и локальный ключ не меняются. Отзыв старой строки из `authorized_keys` в этот playbook не входит. Удаление — это `unlink`, не обещание затереть блоки на диске.
 
 ## 9. Повторный запуск и обрыв
 
-Повторный запуск не меняет существующие ключи, пароли, env и checkout. При `allow_checkout_switch=false` checkout не переключается: нет `reset`, `clean` и stash. Если `HEAD` не равен `devops_git_version`, origin другой или в отслеживаемых файлах есть правки, playbook останавливается. Смена уже существующего checkout на другой запушенный ref возможна только при `allow_checkout_switch=true`. Уже запущенные контейнеры с тем же project name и тем же хешем Compose не пересоздаются. При `deploy_services=true` отсутствующие сервисы из явного списка создаются.
+Повторный запуск не создаёт новую пару Actions, не перезаписывает пароли, env и checkout. После пересоздания VM с тем же `local_vps_dir` на сервер ставится прежняя публичная часть. Оставшиеся legacy-файлы этому не мешают и playbook их не меняет. При `allow_checkout_switch=false` checkout не переключается: нет `reset`, `clean` и stash. Если `HEAD` не равен `devops_git_version`, origin другой или в отслеживаемых файлах есть правки, playbook останавливается. Смена уже существующего checkout на другой запушенный ref возможна только при `allow_checkout_switch=true`. Уже запущенные контейнеры с тем же project name и тем же хешем Compose не пересоздаются. При `deploy_services=true` отсутствующие сервисы из явного списка создаются.
 
 Если на VPS уже есть контейнер `postgres`, `redis` или `grafana` либо непустой `data/postgres`, `data/redis`, `data/grafana`, а соответствующего env нет, новые пароли не создаются. Неясное состояние Docker тоже останавливает playbook, а не считается пустым сервером.
 

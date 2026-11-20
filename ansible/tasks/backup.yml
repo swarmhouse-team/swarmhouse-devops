@@ -149,7 +149,7 @@
   changed_when: false
   retries: "{{ (deploy_wait_timeout | int / 5) | round(0, 'ceil') | int }}"
   delay: 5
-  until: stdout == 'healthy'
+  until: (_task.result.stdout | default('')) == 'healthy'
   when: postgres_running | bool
 
 - name: Проверить утилиты скрипта

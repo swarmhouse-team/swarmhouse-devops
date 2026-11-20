@@ -28,6 +28,15 @@
       devops_git_version или HOME на управляющей машине.
     quiet: true
 
+- name: Остановить, если локальные каталоги секретов пересекаются
+  ansible.builtin.fail:
+    msg: >-
+      local_vps_dir пуст или совпадает у разных хостов этого запуска.
+      Без --limit ключи и env оказались бы в одном каталоге. Запуск остановлен.
+  when: >-
+    ansible_play_hosts_all | map('extract', hostvars, 'local_vps_dir') | list
+    | local_dirs_conflict
+
 - name: Остановить, если ветка не подставлена
   ansible.builtin.fail:
     msg: >-

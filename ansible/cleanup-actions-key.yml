@@ -53,8 +53,8 @@
     - name: Остановить, если копии различаются
       ansible.builtin.fail:
         msg: >-
-          Локальный ключ и {{ devops_actions_key }} не совпадают.
-          Серверный файл не удаляю.
+          Байты локального ключа и {{ devops_actions_key }} различаются.
+          Серверный файл не удаляю: cleanup не выбирает, какая пара каноническая.
       when:
         - cleanup_remote.stat.exists
         - cleanup_local.stat.exists

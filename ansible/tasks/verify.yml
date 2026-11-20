@@ -38,7 +38,6 @@
     - { path: "{{ devops_secrets }}", owner: root, mode: "0755" }
     - { path: "{{ devops_env_dir }}", owner: "{{ deploy_user }}", mode: "0700" }
     - { path: "{{ devops_actions_dir }}", owner: root, mode: "0700" }
-    - { path: "{{ devops_actions_pub }}", owner: root, mode: "0644" }
   loop_control:
     label: "{{ item.path }}"
   register: layout_stats
@@ -47,7 +46,7 @@
   ansible.builtin.assert:
     that:
       - item.stat.exists
-      - item.stat.isdir or item.item.path == devops_actions_pub
+      - item.stat.isdir
       - item.stat.pw_name == item.item.owner
       - item.item.mode == '' or item.stat.mode == item.item.mode
     fail_msg: >-
@@ -80,8 +79,9 @@
 - name: Остановить, если серверный ключ не скопирован локально
   ansible.builtin.fail:
     msg: >-
-      Приватный ключ есть на VPS ({{ devops_actions_key }}),
-      но локальной копии {{ local_vps_dir }}/github-actions/id_ed25519 нет.
+      Legacy-приватный ключ ещё лежит в {{ devops_actions_key }},
+      а канонического файла {{ local_vps_dir }}/github-actions/id_ed25519 нет.
+      С VPS ключ не скачиваю.
   when:
     - remote_actions_private.stat.exists | default(false)
     - not verify_local_key.stat.exists
@@ -96,12 +96,14 @@
       - "Контейнеры с jira в имени, не изменялись: {{ existing_jira_containers | default([]) | join(', ') if (existing_jira_containers | default([]) | length > 0) else 'не найдены' }}"
       - "Непустые каталоги данных, не изменялись: {{ nonempty_data_dirs | default([]) | join(', ') if (nonempty_data_dirs | default([]) | length > 0) else 'не найдены' }}"
       - "Секреты на VPS: {{ devops_env_dir }} (0600, {{ deploy_user }})"
-      - "Публичный ключ Actions: {{ devops_actions_pub }}"
-      - "Временный приватный ключ на VPS: {{ 'ещё лежит ' ~ devops_actions_key if remote_actions_private.stat.exists | default(false) else 'уже удалён, пара не ротировалась' }}"
-      - "Локальные копии: {{ local_vps_dir }}"
+      - "Канонический приватный ключ Actions: {{ local_vps_dir }}/github-actions/id_ed25519"
+      - "Публичный ключ установлен пользователю {{ deploy_user }}. Вход Actions этим фактом не проверен"
+      - "DEPLOY_SSH_KEY заполняется содержимым локального приватного ключа. При смене ключа обновите secret и проверьте вход до отзыва старого"
+      - "Legacy-файлы на VPS не изменялись: {{ 'приватный ' ~ devops_actions_key if remote_actions_private.stat.exists | default(false) else 'приватного нет' }}{{ ', публичный ' ~ devops_actions_pub if server_actions_key_stats.results[1].stat.exists | default(false) else '' }}. Если они остались, проверьте вход, при необходимости обновите DEPLOY_SSH_KEY и только затем отзовите старый ключ"
+      - "Локальные копии env: {{ local_vps_dir }}/env"
       - "Внешние значения, которые bootstrap не создаёт: JIRA_API_TOKEN, JIRA_USER"
       - "В GitHub вручную: secret DEPLOY_SSH_KEY, secret DEPLOY_KNOWN_HOSTS, vars DEPLOY_HOST, DEPLOY_USER, DEPLOY_PORT"
-      - "Вход GitHub Actions на VPS этим playbook не проверялся"
+      - "Вход GitHub Actions на VPS этим playbook не проверялся. DEPLOY_KNOWN_HOSTS — это host key сервера, не ключ Actions"
       - "База exporter берётся из POSTGRES_DB. Роль создаётся только при deploy_services=true и только если её ещё нет"
       - "Новый grafana.env включает вход по паролю и выключает анонимный доступ. Существующий файл меняется только при allow_env_sync=true. Jira-значения bootstrap не генерирует"
       - "Запуск сервисов: {{ 'выполнен, миграций приложения в этом репозитории нет' if deploy_applied | default(false) else 'выключен, deploy_services=false' }}"

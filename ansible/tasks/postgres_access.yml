@@ -1,0 +1,17 @@
+---
+- name: Проверить доступ postgres к PGDATA через родительский каталог
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - --user
+      - "{{ postgres_image_user.uid }}:{{ postgres_image_user.gid }}"
+      - postgres
+      - sh
+      - -c
+      - >-
+        test -x /var/lib/postgresql
+        && case "$PGDATA" in /var/lib/postgresql/*) ;; *) exit 2 ;; esac
+        && test -d "$PGDATA"
+        && test -x "$PGDATA"
+  changed_when: false
