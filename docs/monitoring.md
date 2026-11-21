@@ -108,4 +108,13 @@ docker logs --tail 100 loki
 
 ## Уведомления
 
-В `conf/grafana/provisioning` есть только `datasources` и `dashboards`. Правил Grafana Alerting, contact points и Alertmanager в репозитории нет. Prometheus тоже не подключает `rule_files`. Доставка email или Telegram не настроена и не проверялась.
+Каталог `conf/grafana/provisioning` смонтирован в Grafana целиком. Рядом с datasources и dashboards лежат:
+
+- `alerting/contact-points.yaml` — контакт `swarmhouse-jira`, тип `jira`, проект `SWARMHOUSE`, тип задачи `Task`, адрес `https://swarmhouse.atlassian.net/rest/api/3`. Поля `user` и `password` — это `$JIRA_USER` и `$JIRA_API_TOKEN`. Grafana подставляет их из окружения контейнера, то есть из `env/grafana.env`. В Git значений нет. Заглушки `email-jira` и `api-token` playbook не считает рабочими.
+- `alerting/resource-alerts.yaml` — группа `swarmhouse-host-resources` в папке Swarmhouse. Правило CPU: средняя загрузка выше 85% в течение 5 минут. Правило RAM: доступная память ниже 10% в течение 5 минут. Получатель обоих — `swarmhouse-jira`.
+
+Отдельного файла политик уведомлений и Alertmanager нет. Prometheus `rule_files` не подключает. Email и Telegram не настроены.
+
+Исторический отчёт по действующему VPS сообщал, что уведомление в Jira и эти два правила уже срабатывали. Это не новая проверка. На тестовой VM `swarmhouse-test` при последнем bootstrap сервисы не запускались, поэтому цепочка до Jira там не подтверждена.
+
+Весь стек стоит на том же VPS, что и PostgreSQL. Если пропадёт сам сервер, Prometheus и Grafana не пришлют сигнал извне.

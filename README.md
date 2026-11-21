@@ -2,7 +2,19 @@
 
 Репозиторий Docker Compose для PostgreSQL, Redis и мониторинга на VPS. Приложения сюда не входят: им отдаются базы и кэш по сети Docker, а интерфейсы публикации привязаны к loopback.
 
-Рабочий каталог всех команд ниже — корень этого репозитория на сервере.
+Рабочий каталог ручных команд Compose — корень этого репозитория на сервере. Подготовка VPS — [docs/bootstrap.md](docs/bootstrap.md): по умолчанию `deploy_services=false`, контейнеры не запускаются.
+
+## Как связано
+
+Bootstrap готовит хост, checkout и секреты. Запуск контейнеров — отдельный шаг (`deploy_services=true` или ручной Compose). GitHub Actions только проверяет файлы и, отдельным ручным CD, выкладывает уже подготовленный checkout. Бэкап PostgreSQL — скрипт в репозитории; cron добавляет playbook и только после своего тестового прогона.
+
+Потоки по текущим конфигам:
+
+- метрики экспортёров и хоста забирает Prometheus (`conf/prometheus/prometheus.yml`), Grafana читает его как datasource;
+- логи контейнеров Alloy снимает с сокета Docker и пишет в Loki, Grafana читает Loki;
+- правила CPU и RAM и контакт Jira лежат в provisioning Grafana; токен Jira в Git не входит.
+
+Подробности: [запуск](docs/operations.md), [мониторинг](docs/monitoring.md), [бэкап](docs/backup.md), [что уже подтверждено](docs/bootstrap.md#что-подтверждено).
 
 ## Состав
 
@@ -22,7 +34,13 @@
 - Alloy читает логи контейнеров через сокет Docker и пишет их в Loki.
 - Grafana показывает Prometheus и Loki. Дашборды лежат в `conf/grafana/dashboards` и попадают в папку Swarmhouse.
 
-Подробности: [запуск и доступ](docs/operations.md), [мониторинг](docs/monitoring.md), [бэкап PostgreSQL](docs/backup.md).
+Границы:
+
+- bootstrap — хост, Docker, `deploy`, каталоги, публичный ключ Actions, checkout и env;
+- `deploy_services=true` или ручной `docker compose up` — сами сервисы;
+- GitHub — secrets и variables для CD, playbook их не создаёт;
+- проверки после выкладки — отдельно от факта `Up`;
+- бэкап и тестовое восстановление не заменяют копию вне этого VPS.
 
 ## Структура
 
@@ -39,6 +57,10 @@ conf/alloy/config.alloy
 conf/grafana/
 scripts/backup-postgres.sh
 scripts/restore-postgres-test.sh
+ansible/bootstrap.yml
+ansible/cleanup-actions-key.yml
+.github/workflows/infra-ci.yml
+.github/workflows/infra-cd.yml
 data/                  # на сервере, в Git не входит
 ```
 
@@ -53,7 +75,7 @@ docker network inspect infra
 docker network inspect monitoring
 ```
 
-Если сети ещё нет, её нужно создать до первого запуска. Репозиторий этого сам не делает:
+Compose объявляет сети внешними и сам их не создаёт. Для ручного запуска их создают заранее:
 
 ```bash
 docker network create infra
@@ -70,6 +92,8 @@ cp env/grafana.env.example env/grafana.env
 cp env/postgres-exporter.env.example env/postgres-exporter.env
 cp env/redis-exporter.env.example env/redis-exporter.env
 ```
+
+Команды ниже поднимают контейнеры. Это ручной запуск на машине, где стек действительно нужен, а не шаг по умолчанию и не команда для боевого inventory. На VPS обычный путь — bootstrap с `deploy_services=false`, пока запуск сервисов не подтверждён отдельно.
 
 Каталоги данных с `create_host_path: false` Compose сам не создаст:
 
@@ -88,6 +112,6 @@ docker compose -f docker-compose.monitoring.yml ps
 
 ## GitHub Actions
 
-[CI](.github/workflows/infra-ci.yml) проверяет оба Compose-файла. [CD](.github/workflows/infra-cd.yml) запускается вручную с `main` и в `/opt/swarmhouse/swarmhouse-devops` сначала обновляет `postgres` и `redis`, затем весь `docker-compose.monitoring.yml`. Перед мониторингом на сервере должны быть сеть `monitoring`, каталоги `data/prometheus` и `data/grafana`, а также `env/grafana.env`, `env/postgres-exporter.env` и `env/redis-exporter.env`.
+[CI](.github/workflows/infra-ci.yml) на `pull_request` и `push` в `main` гоняет `ansible/tests/test_*.py`, проверяет `docker compose config` обоих файлов на примерах env и скачивает образы из `docker-compose.yml` на runner. На VPS CI не заходит. [CD](.github/workflows/infra-cd.yml) запускается вручную с `main` и в `/opt/swarmhouse/swarmhouse-devops` сначала обновляет `postgres` и `redis`, затем весь `docker-compose.monitoring.yml`. CD требует `pg_up=1` и сам коммит не откатывает. Перед мониторингом на сервере должны быть сеть `monitoring`, каталоги `data/prometheus` и `data/grafana`, а также `env/grafana.env`, `env/postgres-exporter.env` и `env/redis-exporter.env`.
 
 Подготовка VPS — [docs/bootstrap.md](docs/bootstrap.md). Bootstrap ставит Docker, пользователя `deploy` и env. Контейнеры поднимаются только при `deploy_services=true`. Бэкап PostgreSQL ставится в cron через `scripts/backup-postgres.sh` после успешного тестового дампа.

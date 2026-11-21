@@ -6,7 +6,7 @@
 
 - Linux-хост. `node-exporter` монтирует `/proc`, `/sys` и `/`. cAdvisor монтирует `/`, `/var/run`, `/sys`, `/var/lib/docker`, `/dev/disk` и запускается с `privileged: true`.
 - Docker и Compose V2. Версия в репозитории не зафиксирована.
-- Внешние сети `infra` и `monitoring`. Проверка: `docker network inspect infra` и `docker network inspect monitoring`. Создания сетей в репозитории нет.
+- Внешние сети `infra` и `monitoring`. Compose их не создаёт. При `deploy_services=true` отсутствующие сети с драйвером `bridge` создаёт playbook; уже существующую сеть с другим драйвером он не меняет. Для ручного запуска: `docker network inspect infra` и `docker network inspect monitoring`.
 - Файлы `.env`, `env/postgres.env`, `env/redis.env`, `env/grafana.env`, `env/postgres-exporter.env`, `env/redis-exporter.env`. В Git есть только `*.env.example`.
 - Каталоги `data/postgres`, `data/redis`, `data/prometheus`, `data/grafana`. Для этих bind-монтирований задано `create_host_path: false`.
 
