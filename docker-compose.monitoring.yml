@@ -1,0 +1,253 @@
+name: monitoring
+
+x-common: &common
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  logging:
+    driver: json-file
+    options:
+      max-size: "100m"
+      max-file: "3"
+
+services:
+  prometheus:
+    <<: *common
+    image: prom/prometheus:${PROMETHEUS_VERSION:?Set PROMETHEUS_VERSION in .env}
+    container_name: prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --storage.tsdb.retention.size=2GB
+    cpus: 0.5
+    mem_limit: 512m
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - type: bind
+        source: ./conf/prometheus/prometheus.yml
+        target: /etc/prometheus/prometheus.yml
+        read_only: true
+        bind:
+          create_host_path: false
+      - ./data/prometheus:/prometheus
+    networks:
+      - monitoring
+
+  grafana:
+    <<: *common
+    image: grafana/grafana:${GRAFANA_VERSION:?Set GRAFANA_VERSION in .env}
+    container_name: grafana
+    env_file:
+      - ./env/grafana.env
+    environment:
+      TZ: ${TZ:-UTC}
+    cpus: 0.5
+    mem_limit: 512m
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - type: bind
+        source: ./conf/grafana/grafana.ini
+        target: /etc/grafana/grafana.ini
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./conf/grafana/provisioning
+        target: /etc/grafana/provisioning
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./conf/grafana/dashboards
+        target: /etc/grafana/dashboards
+        read_only: true
+        bind:
+          create_host_path: false
+      - ./data/grafana:/var/lib/grafana
+      - ./conf/grafana/provisioning/alerting/contact-points.yaml:/etc/grafana/provisioning/alerting/contact-points.yaml
+      - ./conf/grafana/provisioning/alerting/resource-alerts.yaml:/etc/grafana/provisioning/alerting/resource-alerts.yaml
+    networks:
+      - monitoring
+
+  node-exporter:
+    <<: *common
+    image: prom/node-exporter:${NODE_EXPORTER_VERSION:?Set NODE_EXPORTER_VERSION in .env}
+    container_name: node-exporter
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/host/root
+      - '--collector.filesystem.mount-points-exclude=^/(dev|proc|sys|var/lib/docker/.+|var/lib/containers/storage/.+)($$|/)'
+    cpus: 0.25
+    mem_limit: 128m
+    read_only: true
+    volumes:
+      - type: bind
+        source: /proc
+        target: /host/proc
+        read_only: true
+      - type: bind
+        source: /sys
+        target: /host/sys
+        read_only: true
+      - type: bind
+        source: /
+        target: /host/root
+        read_only: true
+        bind:
+          propagation: rslave
+    networks:
+      - monitoring
+
+  postgres-exporter:
+    <<: *common
+    image: quay.io/prometheuscommunity/postgres-exporter:${POSTGRES_EXPORTER_VERSION:?Set POSTGRES_EXPORTER_VERSION in .env}
+    container_name: postgres-exporter
+    env_file:
+      - ./env/postgres-exporter.env
+    cpus: 0.25
+    mem_limit: 128m
+    read_only: true
+    networks:
+      - monitoring
+
+  redis-exporter:
+    <<: *common
+    image: oliver006/redis_exporter:${REDIS_EXPORTER_VERSION:?Set REDIS_EXPORTER_VERSION in .env}
+    container_name: redis-exporter
+    env_file:
+      - ./env/redis-exporter.env
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    cpus: 0.25
+    mem_limit: 128m
+    read_only: true
+    networks:
+      - monitoring
+
+  cadvisor:
+    image: ghcr.io/google/cadvisor:${CADVISOR_VERSION:?Set CADVISOR_VERSION in .env}
+    container_name: cadvisor
+    restart: unless-stopped
+    privileged: true
+    devices:
+      - /dev/kmsg
+    command:
+      - --docker_only=true
+      - --housekeeping_interval=15s
+      - --enable_load_reader=true
+    cpus: 0.25
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+    volumes:
+      - type: bind
+        source: /
+        target: /rootfs
+        read_only: true
+        bind:
+          propagation: rslave
+      - type: bind
+        source: /var/run
+        target: /var/run
+        read_only: true
+      - type: bind
+        source: /sys
+        target: /sys
+        read_only: true
+      - type: bind
+        source: /var/lib/docker
+        target: /var/lib/docker
+        read_only: true
+      - type: bind
+        source: /dev/disk
+        target: /dev/disk
+        read_only: true
+    networks:
+      - monitoring
+
+  loki:
+    <<: *common
+    image: grafana/loki:${LOKI_VERSION:?Set LOKI_VERSION in .env}
+    container_name: loki
+    command:
+      - -config.file=/etc/loki/config.yml
+    cpus: 0.5
+    mem_limit: 512m
+    volumes:
+      - type: bind
+        source: ./conf/loki/config.yml
+        target: /etc/loki/config.yml
+        read_only: true
+        bind:
+          create_host_path: false
+      - loki_data:/loki
+    networks:
+      - monitoring
+
+  alloy:
+    <<: *common
+    image: grafana/alloy:${ALLOY_VERSION:?Set ALLOY_VERSION in .env}
+    container_name: alloy
+    user: "0:0"
+    depends_on:
+      alloy-init:
+        condition: service_completed_successfully
+    command:
+      - run
+      - --storage.path=/data/storage
+      - /etc/alloy/config.alloy
+    cpus: 0.25
+    mem_limit: 256m
+    volumes:
+      - type: bind
+        source: ./conf/alloy/config.alloy
+        target: /etc/alloy/config.alloy
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+        read_only: true
+        bind:
+          create_host_path: false
+      - alloy_data:/data
+    networks:
+      - monitoring
+    
+  alloy-init:
+    <<: *common
+    image: grafana/alloy:${ALLOY_VERSION:?Set ALLOY_VERSION in .env}
+    container_name: alloy-init
+    user: "0:0"
+    restart: "no"
+    network_mode: none
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        mkdir -p /data/storage
+        chown -R 0:0 /data
+        chmod u+rwx /data
+        chmod -R u+rwX /data/storage
+    volumes:
+      - alloy_data:/data
+volumes:
+  loki_data:
+  alloy_data:
+networks:
+  monitoring:
+    external: true
+    name: monitoring

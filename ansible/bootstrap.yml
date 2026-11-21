@@ -1,0 +1,46 @@
+---
+# Подготовка VPS. Контейнеры запускаются только при deploy_services=true.
+# Cleanup ключа Actions — отдельный playbook cleanup-actions-key.yml.
+- name: Подготовить VPS к swarmhouse
+  hosts: all
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Предварительные проверки
+      ansible.builtin.import_tasks: tasks/preflight.yml
+
+    - name: Пакеты
+      ansible.builtin.import_tasks: tasks/packages.yml
+
+    - name: Docker
+      ansible.builtin.import_tasks: tasks/docker.yml
+
+    - name: Пользователь deploy
+      ansible.builtin.import_tasks: tasks/user.yml
+
+    - name: Каталоги
+      ansible.builtin.import_tasks: tasks/directories.yml
+
+    - name: Ключ GitHub Actions
+      ansible.builtin.import_tasks: tasks/actions_key.yml
+
+    - name: Уже существующие контейнеры и данные
+      ansible.builtin.import_tasks: tasks/state.yml
+
+    - name: Checkout swarmhouse-devops
+      ansible.builtin.import_tasks: tasks/checkout.yml
+
+    - name: Env и секреты
+      ansible.builtin.import_tasks: tasks/env.yml
+
+    - name: Локальные копии env
+      ansible.builtin.import_tasks: tasks/fetch.yml
+
+    - name: Запуск сервисов
+      ansible.builtin.import_tasks: tasks/deploy.yml
+
+    - name: Бэкап PostgreSQL
+      ansible.builtin.import_tasks: tasks/backup.yml
+
+    - name: Проверки и отчёт
+      ansible.builtin.import_tasks: tasks/verify.yml

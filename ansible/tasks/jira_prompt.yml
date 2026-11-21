@@ -1,0 +1,134 @@
+---
+- name: Прочитать канонический grafana.env перед запросом Jira
+  ansible.builtin.slurp:
+    src: "{{ devops_env_dir }}/grafana.env"
+  register: jira_grafana_slurp
+  no_log: true
+  diff: false
+
+- name: Разобрать grafana.env без вывода значений
+  ansible.builtin.set_fact:
+    deploy_grafana_env: "{{ jira_grafana_slurp.content | b64decode | parse_env }}"
+    jira_grafana_text: "{{ jira_grafana_slurp.content | b64decode }}"
+  no_log: true
+
+- name: Список недостающих значений Jira
+  ansible.builtin.set_fact:
+    deploy_jira_missing: "{{ deploy_grafana_env | jira_missing }}"
+
+- name: Проверить серверную копию grafana.env
+  ansible.builtin.stat:
+    path: "{{ devops_env_dir }}/grafana.env"
+    checksum_algorithm: sha256
+  register: jira_server_env
+
+- name: Проверить локальную копию grafana.env
+  ansible.builtin.stat:
+    path: "{{ local_vps_dir }}/env/grafana.env"
+    checksum_algorithm: sha256
+  register: jira_local_env
+  delegate_to: localhost
+  become: false
+
+- name: Остановить при расхождении копий grafana.env
+  ansible.builtin.fail:
+    msg: >-
+      Локальная и серверная копии grafana.env различаются.
+      Jira-значения не спрашиваю и ни одну копию не перезаписываю.
+  when: >-
+    (jira_server_env.stat.exists | bool) | env_copy_action(
+      jira_local_env.stat.exists | bool,
+      jira_server_env.stat.checksum | default(''),
+      jira_local_env.stat.checksum | default('')
+    ) == 'conflict'
+
+- name: Остановить интерактивный ввод Jira для нескольких хостов
+  ansible.builtin.fail:
+    msg: >-
+      Недостающие {{ deploy_jira_missing | join(', ') }} не спрашиваю:
+      интерактивное заполнение допустимо только для одного хоста.
+      Запишите значения в grafana.env каждого хоста. Файлы не меняю.
+  when:
+    - deploy_jira_missing | length > 0
+    - ansible_play_hosts_all | length != 1
+
+- name: Запросить JIRA_USER
+  ansible.builtin.pause:
+    prompt: JIRA_USER
+    echo: true
+  register: jira_user_prompt
+  delegate_to: localhost
+  become: false
+  no_log: true
+  when:
+    - "'JIRA_USER' in deploy_jira_missing"
+    - ansible_play_hosts_all | length == 1
+
+- name: Запросить JIRA_API_TOKEN
+  ansible.builtin.pause:
+    prompt: JIRA_API_TOKEN
+    echo: false
+  register: jira_token_prompt
+  delegate_to: localhost
+  become: false
+  no_log: true
+  when:
+    - "'JIRA_API_TOKEN' in deploy_jira_missing"
+    - ansible_play_hosts_all | length == 1
+
+- name: Проверить введённые значения Jira до записи
+  ansible.builtin.fail:
+    msg: >-
+      Недостающие {{ deploy_jira_missing | join(', ') }} не записаны.
+      pause спрашивает их в терминале процесса ansible-playbook и не ждёт,
+      если этот stdin не интерактивен. Пустой ввод и символы пробела, #,
+      кавычек, $, обратного слэша и перевода строки тоже не принимаю.
+      Запишите значения в {{ devops_env_dir }}/grafana.env.
+      Пустые и фиктивные значения не подставляю. Файлы не меняю.
+  when:
+    - deploy_jira_missing | length > 0
+    - not (deploy_jira_missing | jira_answers_ready(jira_answers))
+  vars:
+    jira_answers: >-
+      {{
+        ({} if 'JIRA_USER' not in deploy_jira_missing else {'JIRA_USER': jira_user_prompt.user_input | default('')})
+        | combine({} if 'JIRA_API_TOKEN' not in deploy_jira_missing else {'JIRA_API_TOKEN': jira_token_prompt.user_input | default('')})
+      }}
+
+- name: Записать только JIRA_USER и JIRA_API_TOKEN
+  ansible.builtin.copy:
+    dest: "{{ devops_env_dir }}/grafana.env"
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_group }}"
+    mode: "0600"
+    content: "{{ jira_grafana_text | apply_jira_lines(jira_answers) }}"
+  no_log: true
+  diff: false
+  when:
+    - deploy_jira_missing | length > 0
+    - deploy_jira_missing | jira_answers_ready(jira_answers)
+  vars:
+    jira_answers: >-
+      {{
+        ({} if 'JIRA_USER' not in deploy_jira_missing else {'JIRA_USER': jira_user_prompt.user_input | default('')})
+        | combine({} if 'JIRA_API_TOKEN' not in deploy_jira_missing else {'JIRA_API_TOKEN': jira_token_prompt.user_input | default('')})
+      }}
+
+- name: Сохранить ту же копию grafana.env на controller
+  ansible.builtin.copy:
+    dest: "{{ local_vps_dir }}/env/grafana.env"
+    mode: "0600"
+    content: "{{ jira_grafana_text | apply_jira_lines(jira_answers) }}"
+  delegate_to: localhost
+  become: false
+  no_log: true
+  diff: false
+  when:
+    - deploy_jira_missing | length > 0
+    - deploy_jira_missing | jira_answers_ready(jira_answers)
+  vars:
+    jira_answers: >-
+      {{
+        ({} if 'JIRA_USER' not in deploy_jira_missing else {'JIRA_USER': jira_user_prompt.user_input | default('')})
+        | combine({} if 'JIRA_API_TOKEN' not in deploy_jira_missing else {'JIRA_API_TOKEN': jira_token_prompt.user_input | default('')})
+      }}

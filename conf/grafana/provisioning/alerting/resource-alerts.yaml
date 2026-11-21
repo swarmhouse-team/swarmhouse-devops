@@ -1,0 +1,150 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: swarmhouse-host-resources
+    folder: Swarmhouse
+    interval: 1m
+
+    rules:
+      - uid: swarmhouse-host-cpu-high
+        title: VPS CPU usage above 85 percent
+        condition: B
+        for: 5m
+        noDataState: NoData
+        execErrState: Error
+        isPaused: false
+
+        labels:
+          severity: warning
+          service: host
+          resource: cpu
+
+        annotations:
+          summary: 'High CPU usage on {{ $labels.instance }}'
+          description: 'CPU usage averaged over 5 minutes has stayed above 85% for 5 minutes.'
+
+        notification_settings:
+          receiver: swarmhouse-jira
+          group_by:
+            - alertname
+            - instance
+          group_wait: 30s
+          group_interval: 5m
+          repeat_interval: 4h
+
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              datasource:
+                type: prometheus
+                uid: prometheus
+              editorMode: code
+              expr: '100 * (1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])))'
+              instant: true
+              range: false
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+
+          - refId: B
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 0
+              to: 0
+            model:
+              datasource:
+                type: __expr__
+                uid: __expr__
+              type: threshold
+              expression: A
+              refId: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params:
+                      - 85
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - B
+                  reducer:
+                    type: last
+                    params: []
+                  type: query
+
+      - uid: swarmhouse-host-memory-high
+        title: VPS available RAM below 10 percent
+        condition: B
+        for: 5m
+        noDataState: NoData
+        execErrState: Error
+        isPaused: false
+
+        labels:
+          severity: warning
+          service: host
+          resource: memory
+
+        annotations:
+          summary: 'Low available RAM on {{ $labels.instance }}'
+          description: 'Available RAM has stayed below 10% for 5 minutes.'
+
+        notification_settings:
+          receiver: swarmhouse-jira
+          group_by:
+            - alertname
+            - instance
+          group_wait: 30s
+          group_interval: 5m
+          repeat_interval: 4h
+
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              datasource:
+                type: prometheus
+                uid: prometheus
+              editorMode: code
+              expr: '100 * node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes'
+              instant: true
+              range: false
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+
+          - refId: B
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 0
+              to: 0
+            model:
+              datasource:
+                type: __expr__
+                uid: __expr__
+              type: threshold
+              expression: A
+              refId: B
+              conditions:
+                - evaluator:
+                    type: lt
+                    params:
+                      - 10
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - B
+                  reducer:
+                    type: last
+                    params: []
+                  type: query

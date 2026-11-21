@@ -1,0 +1,62 @@
+---
+- name: Остановить, если имя роли или базы нельзя подставить в SQL
+  ansible.builtin.fail:
+    msg: >-
+      DATA_SOURCE_USER или POSTGRES_DB не является обычным идентификатором,
+      либо роль совпадает с POSTGRES_USER. Роль и пароль не меняю.
+  when: >-
+    not (deploy_exporter_env.DATA_SOURCE_USER | default('') | is_ident)
+    or not (deploy_postgres_env.POSTGRES_DB | default('') | is_ident)
+    or deploy_exporter_env.DATA_SOURCE_USER == deploy_postgres_env.POSTGRES_USER
+    or deploy_exporter_env.DATA_SOURCE_USER in ['postgres', 'root']
+
+- name: Создать отсутствующие базу и роль exporter
+  block:
+    - name: Применить права exporter без смены существующего пароля
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - -i
+          - postgres
+          - sh
+          - -ec
+          - |
+            set -eu
+            IFS= read -r EXPORTER_PASSWORD
+            ROLE="$1"
+            DB="$2"
+            OWNER="$3"
+            psql -U "$OWNER" -d postgres -v ON_ERROR_STOP=1 -q \
+              -v role="$ROLE" -v pass="$EXPORTER_PASSWORD" -v db="$DB" -v owner="$OWNER" <<'SQL'
+            SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'db') AS db_exists \gset
+            \if :db_exists
+            \else
+            CREATE DATABASE :"db" OWNER :"owner" TEMPLATE template0;
+            \endif
+            SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'role') AS role_exists \gset
+            \if :role_exists
+            \else
+            CREATE ROLE :"role" LOGIN PASSWORD :'pass';
+            \endif
+            GRANT pg_monitor TO :"role";
+            GRANT CONNECT ON DATABASE :"db" TO :"role";
+            SQL
+            PGPASSWORD="$EXPORTER_PASSWORD" psql -h 127.0.0.1 -U "$ROLE" -d "$DB" \
+              -v ON_ERROR_STOP=1 -q -Atqc 'SELECT 1' >/dev/null
+          - sh
+          - "{{ deploy_exporter_env.DATA_SOURCE_USER }}"
+          - "{{ deploy_postgres_env.POSTGRES_DB }}"
+          - "{{ deploy_postgres_env.POSTGRES_USER }}"
+        stdin: "{{ deploy_exporter_env.DATA_SOURCE_PASS }}"
+      no_log: true
+      diff: false
+      changed_when: false
+  rescue:
+    - name: Остановить, не меняя пароль существующей роли
+      ansible.builtin.fail:
+        msg: >-
+          Роль {{ deploy_exporter_env.DATA_SOURCE_USER }} не смогла выполнить SELECT 1
+          в базе {{ deploy_postgres_env.POSTGRES_DB }}.
+          Существующий пароль роли не меняю, значение DATA_SOURCE_PASS не показываю.
+          Volumes не удалялись.

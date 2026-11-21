@@ -1,0 +1,14 @@
+---
+- name: "Проверить корень {{ data_root }}"
+  ansible.builtin.stat:
+    path: "{{ devops_checkout }}/{{ data_root }}"
+  register: data_root_kind
+
+- name: "Остановить, если {{ data_root }} не каталог"
+  ansible.builtin.fail:
+    msg: >-
+      {{ devops_checkout }}/{{ data_root }} существует и это не каталог.
+      Не удаляю и владельца не меняю.
+  when:
+    - data_root_kind.stat.exists
+    - (not data_root_kind.stat.isdir) or (data_root_kind.stat.islnk | bool)

@@ -1,0 +1,82 @@
+---
+- name: "Проверить тег образа {{ data_mount.name }}"
+  ansible.builtin.assert:
+    that:
+      - data_mount.tag | image_tag_ok
+      - data_mount.host | data_host_ok
+      - data_mount.mount | mount_path_ok
+    fail_msg: >-
+      Образ или путь {{ data_mount.host }} не подходят.
+      Каталог не меняю.
+    quiet: true
+
+- name: "Проверить, есть ли образ {{ data_mount.name }} локально"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - image
+      - inspect
+      - --format
+      - "{{ '{{' }}.Id{{ '}}' }}"
+      - "{{ data_mount.image }}"
+  register: data_image_present
+  changed_when: false
+  failed_when: false
+
+- name: "Скачать отсутствующий образ {{ data_mount.name }}"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - pull
+      - "{{ data_mount.image }}"
+  when: data_image_present.rc != 0
+
+- name: "Прочитать UID и GID пользователя по умолчанию из образа {{ data_mount.name }}"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - --network
+      - none
+      - --entrypoint
+      - id
+      - "{{ data_mount.image }}"
+  register: data_image_id
+  changed_when: false
+
+- name: "Зафиксировать пользователя образа {{ data_mount.name }}"
+  ansible.builtin.set_fact:
+    data_image_user: "{{ data_image_id.stdout | parse_posix_id }}"
+
+- name: "Повторно отказать, если {{ data_mount.host }} изменился до смены владельца"
+  ansible.builtin.include_tasks: tasks/datadir_kind.yml
+  vars:
+    data_root: "{{ data_mount.host }}"
+
+- name: "Подготовить корень {{ data_mount.host }}"
+  ansible.builtin.include_tasks: tasks/datadir_root.yml
+  vars:
+    data_root: "{{ data_mount.host }}"
+    data_uid: "{{ data_image_user.uid }}"
+    data_gid: "{{ data_image_user.gid }}"
+    data_image: "{{ data_mount.image }}"
+
+- name: "Проверить запись пользователя образа в {{ data_mount.mount }}"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - --network
+      - none
+      - --user
+      - "{{ data_image_user.uid }}:{{ data_image_user.gid }}"
+      - --mount
+      - "type=bind,source={{ devops_checkout }}/{{ data_mount.host }},target={{ data_mount.mount }}"
+      - --entrypoint
+      - sh
+      - "{{ data_mount.image }}"
+      - -c
+      - "test -d {{ data_mount.mount }} && test -x {{ data_mount.mount }} && test -w {{ data_mount.mount }}"
+  changed_when: false

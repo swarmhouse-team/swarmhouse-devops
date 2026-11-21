@@ -1,0 +1,83 @@
+---
+- name: Подготовить локальный каталог копий env
+  ansible.builtin.file:
+    path: "{{ local_vps_dir }}/env"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  become: false
+
+- name: Проверить локальные копии env
+  ansible.builtin.stat:
+    path: "{{ local_vps_dir }}/env/{{ item.secret }}"
+    checksum_algorithm: sha256
+  loop: "{{ compose_env_files }}"
+  loop_control:
+    label: "{{ item.secret }}"
+  register: local_env_stats
+  delegate_to: localhost
+  become: false
+
+- name: Остановить, если локальная копия env отличается
+  ansible.builtin.fail:
+    msg: >-
+      Локальный файл {{ local_vps_dir }}/env/{{ item.0.item.secret }}
+      уже есть и не совпадает с {{ devops_env_dir }}/{{ item.0.item.secret }}.
+      Ни локальную, ни серверную копию не перезаписываю. Содержимое не показываю.
+      Возможная причина: сервер пересоздан, а {{ local_vps_dir }} остался от прошлого окружения.
+      Новое окружение: отдельный inventory_hostname или local_vps_dir.
+      Повторный запуск должен использовать тот же каталог, без новой метки времени на каждый старт.
+      Прежнее окружение автоматически не восстанавливается. Верните серверные env
+      из своей резервной копии и отдельно проверьте их соответствие данным БД.
+  loop: "{{ secret_env_final.results | zip(local_env_stats.results) | list }}"
+  loop_control:
+    label: "{{ item.0.item.secret }}"
+  when: >-
+    (item.0.stat.exists | bool) | env_copy_action(
+      item.1.stat.exists | bool,
+      item.0.stat.checksum | default(''),
+      item.1.stat.checksum | default('')
+    ) == 'conflict'
+
+# fetch выполняется на целевой VM. Локальный каталог и сверка checksum выше идут через delegate_to: localhost.
+- name: Забрать отсутствующие env на управляющую машину
+  ansible.builtin.fetch:
+    src: "{{ devops_env_dir }}/{{ item.0.item.secret }}"
+    dest: "{{ local_vps_dir }}/env/{{ item.0.item.secret }}"
+    flat: true
+  loop: "{{ secret_env_final.results | zip(local_env_stats.results) | list }}"
+  loop_control:
+    label: "{{ item.0.item.secret }}"
+  no_log: true
+  diff: false
+  when: not item.1.stat.exists
+
+- name: Права локальных копий env
+  ansible.builtin.file:
+    path: "{{ local_vps_dir }}/env/{{ item.secret }}"
+    mode: "0600"
+  loop: "{{ compose_env_files }}"
+  loop_control:
+    label: "{{ item.secret }}"
+  delegate_to: localhost
+  become: false
+
+- name: Проверить режим локальных копий env
+  ansible.builtin.stat:
+    path: "{{ local_vps_dir }}/env/{{ item.secret }}"
+  loop: "{{ compose_env_files }}"
+  loop_control:
+    label: "{{ item.secret }}"
+  register: local_env_modes
+  delegate_to: localhost
+  become: false
+
+- name: Остановить, если локальному env нельзя выставить 0600
+  ansible.builtin.fail:
+    msg: >-
+      {{ local_vps_dir }}/env/{{ item.item.secret }} остался в режиме
+      {{ item.stat.mode }}. В WSL храните копии в Linux-домашнем каталоге, не в /mnt/c.
+  loop: "{{ local_env_modes.results }}"
+  loop_control:
+    label: "{{ item.item.secret }}"
+  when: item.stat.mode != '0600'

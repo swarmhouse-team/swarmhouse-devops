@@ -1,0 +1,62 @@
+---
+- name: "Запустить {{ compose_project.project_name }} без pull always и без пересоздания"
+  block:
+    - name: "docker compose up {{ compose_project.project_name }}"
+      community.docker.docker_compose_v2:
+        project_src: "{{ devops_checkout }}"
+        project_name: "{{ compose_project.project_name }}"
+        files:
+          - "{{ compose_project.file }}"
+        services: "{{ compose_project.services }}"
+        state: present
+        recreate: never
+        pull: missing
+        build: never
+        remove_orphans: false
+        wait: "{{ compose_project.wait | bool }}"
+        wait_timeout: "{{ deploy_wait_timeout | int }}"
+      no_log: true
+      diff: false
+
+    - name: Дождаться сервисов monitoring
+      ansible.builtin.command:
+        argv:
+          - docker
+          - inspect
+          - --format
+          - "{{ '{{' }}.State.Status{{ '}}' }} {{ '{{' }}.State.ExitCode{{ '}}' }}"
+          - "{{ item }}"
+      loop: "{{ compose_project.services }}"
+      register: deploy_ready
+      changed_when: false
+      retries: "{{ (deploy_wait_timeout | int / 5) | round(0, 'ceil') | int }}"
+      delay: 5
+      until: item | service_ready(_task.result.stdout | default(''))
+      when: not (compose_project.wait | bool)
+  rescue:
+    - name: Прочитать состояние сервисов без логов
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --project-directory
+          - "{{ devops_checkout }}"
+          - --project-name
+          - "{{ compose_project.project_name }}"
+          - -f
+          - "{{ devops_checkout }}/{{ compose_project.file }}"
+          - ps
+          - --format
+          - "{{ '{{' }}.Service{{ '}}' }} {{ '{{' }}.Status{{ '}}' }}"
+      register: deploy_ps
+      changed_when: false
+      failed_when: false
+
+    - name: Остановить запуск и показать состояние
+      ansible.builtin.fail:
+        msg: >-
+          Запуск {{ compose_project.project_name }} остановлен.
+          compose down, удаление volumes и пересоздание не выполнялись.
+          Причина: {{ ansible_failed_result | public_failure_text }}.
+          Состояние: {{ deploy_ps.stdout | default('') | trim | default('контейнеров нет', true) }}.
+          Миграции не запускались.

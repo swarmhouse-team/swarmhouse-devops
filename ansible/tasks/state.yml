@@ -1,0 +1,59 @@
+---
+- name: Список имён всех контейнеров
+  ansible.builtin.command:
+    argv:
+      - docker
+      - ps
+      - -a
+      - --format
+      - "{{ '{{' }}.Names{{ '}}' }}"
+  register: all_container_names
+  changed_when: false
+
+- name: Собрать найденные контейнеры проекта
+  ansible.builtin.set_fact:
+    existing_project_containers: >-
+      {{
+        project_containers | intersect(all_container_names.stdout_lines)
+      }}
+
+- name: Отметить контейнеры Jira, не изменяя их
+  ansible.builtin.set_fact:
+    existing_jira_containers: >-
+      {{
+        all_container_names.stdout_lines
+        | select('search', 'jira')
+        | list
+      }}
+
+- name: Проверить каталоги данных checkout
+  ansible.builtin.stat:
+    path: "{{ devops_checkout }}/data/{{ item }}"
+  loop:
+    - postgres
+    - redis
+    - grafana
+    - prometheus
+  register: data_dir_stats
+
+- name: Проверить, есть ли файлы в каталогах данных
+  ansible.builtin.find:
+    paths: "{{ item.stat.path }}"
+    hidden: true
+    file_type: any
+    recurse: false
+  loop: "{{ data_dir_stats.results }}"
+  when: item.stat.exists and item.stat.isdir
+  register: data_dir_entries
+
+- name: Собрать непустые каталоги данных
+  ansible.builtin.set_fact:
+    nonempty_data_dirs: >-
+      {{
+        data_dir_entries.results
+        | default([])
+        | selectattr('matched', 'defined')
+        | selectattr('matched', '>', 0)
+        | map(attribute='item.stat.path')
+        | list
+      }}

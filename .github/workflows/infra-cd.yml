@@ -1,0 +1,204 @@
+name: Infrastructure CD
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: infrastructure-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy PostgreSQL, Redis and monitoring
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+      DEPLOY_PORT: ${{ vars.DEPLOY_PORT }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+      DEPLOY_SHA: ${{ github.sha }}
+
+    steps:
+      - name: Prepare SSH
+        run: |
+          set -euo pipefail
+
+          : "${DEPLOY_HOST:?Set DEPLOY_HOST}"
+          : "${DEPLOY_USER:?Set DEPLOY_USER}"
+          : "${DEPLOY_PORT:?Set DEPLOY_PORT}"
+          : "${DEPLOY_SSH_KEY:?Set DEPLOY_SSH_KEY}"
+          : "${DEPLOY_KNOWN_HOSTS:?Set DEPLOY_KNOWN_HOSTS}"
+
+          [[ "$DEPLOY_PORT" =~ ^[1-9][0-9]{0,4}$ ]]
+          (( DEPLOY_PORT <= 65535 ))
+          [[ "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+          install -d -m 700 "$HOME/.ssh"
+
+          printf '%s\n' "$DEPLOY_SSH_KEY" \
+            | tr -d '\r' > "$HOME/.ssh/deploy_key"
+
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" \
+            | tr -d '\r' > "$HOME/.ssh/known_hosts"
+
+          chmod 600 "$HOME/.ssh/deploy_key"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+          ssh-keygen -y -P "" \
+            -f "$HOME/.ssh/deploy_key" > /dev/null
+
+      - name: Deploy infrastructure
+        run: |
+          set -euo pipefail
+
+          ssh \
+            -i "$HOME/.ssh/deploy_key" \
+            -p "$DEPLOY_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -o ConnectTimeout=15 \
+            -o ServerAliveInterval=15 \
+            -o ServerAliveCountMax=3 \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "bash -se -- '$DEPLOY_SHA'" <<'REMOTE'
+          set -euo pipefail
+
+          DEPLOY_SHA="$1"
+          cd /opt/swarmhouse/swarmhouse-devops
+
+          # Prevent simultaneous deployment from another process.
+          exec 9>/opt/swarmhouse/swarmhouse-devops/.git/infra-deploy.lock
+          flock -n 9 || {
+            echo "Another deployment is already running."
+            exit 1
+          }
+
+          # Do not overwrite manually modified tracked files.
+          if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
+            echo "Tracked files have local changes. Deployment aborted."
+            exit 1
+          fi
+
+          git fetch --prune origin \
+            '+refs/heads/main:refs/remotes/origin/main'
+
+          git cat-file -e "${DEPLOY_SHA}^{commit}"
+          if [[ "$DEPLOY_SHA" != "$(git rev-parse origin/main)" ]]; then
+            echo "Deployment SHA is not the latest main commit."
+            exit 1
+          fi
+
+          PREVIOUS_SHA="$(git rev-parse HEAD)"
+          echo "Previous commit: $PREVIOUS_SHA"
+          echo "Deploying commit: $DEPLOY_SHA"
+
+          git checkout --detach "$DEPLOY_SHA"
+
+          test -f docker-compose.yml
+          test -s .env
+          test -s env/postgres.env
+          test -s env/redis.env
+          test -f conf/postgres/postgresql.conf
+          test -f conf/redis/redis.conf
+          test -d data/postgres
+          test -d data/redis
+          test -f docker-compose.monitoring.yml
+          test -s env/grafana.env
+          test -s env/postgres-exporter.env
+          test -s env/redis-exporter.env
+          test -f conf/prometheus/prometheus.yml
+          test -f conf/loki/config.yml
+          test -f conf/alloy/config.alloy
+          test -f conf/grafana/grafana.ini
+          test -d conf/grafana/dashboards
+          test -d data/prometheus
+          test -d data/grafana
+
+          docker network inspect infra > /dev/null
+          docker network inspect monitoring > /dev/null
+          docker compose version
+          docker compose -f docker-compose.yml config --quiet
+          docker compose -f docker-compose.monitoring.yml config --quiet
+
+          # Download images before restarting any services.
+          docker compose -f docker-compose.yml pull postgres redis
+
+          # Restart both services so bind-mounted config changes apply.
+          if ! docker compose -f docker-compose.yml up \
+            -d \
+            --force-recreate \
+            --wait \
+            --wait-timeout 120 \
+            postgres redis; then
+            docker compose -f docker-compose.yml ps
+            echo "Deployment failed. Inspect logs directly on the server."
+            echo "Previous commit: $PREVIOUS_SHA"
+            exit 1
+          fi
+
+          docker compose -f docker-compose.yml ps
+
+          docker compose -f docker-compose.monitoring.yml pull
+
+          if ! docker compose -f docker-compose.monitoring.yml up \
+            -d \
+            --force-recreate; then
+            docker compose -f docker-compose.monitoring.yml ps
+            echo "Monitoring deployment failed. Inspect logs directly on the server."
+            echo "Previous commit: $PREVIOUS_SHA"
+            exit 1
+          fi
+
+          alloy_init_status="$(docker inspect --format '{{.State.Status}} {{.State.ExitCode}}' alloy-init)"
+          if [[ "$alloy_init_status" != "exited 0" ]]; then
+            echo "alloy-init did not exit 0: ${alloy_init_status}"
+            docker compose -f docker-compose.monitoring.yml ps
+            echo "Previous commit: $PREVIOUS_SHA"
+            exit 1
+          fi
+
+          for service in prometheus grafana loki alloy cadvisor node-exporter postgres-exporter redis-exporter; do
+            state="$(docker inspect --format '{{.State.Status}}' "$service")"
+            if [[ "$state" != "running" ]]; then
+              echo "${service} is ${state}"
+              docker compose -f docker-compose.monitoring.yml ps
+              echo "Previous commit: $PREVIOUS_SHA"
+              exit 1
+            fi
+          done
+
+          prom_port="$(python3 -c 'import pathlib; env={k.strip(): v.strip() for line in pathlib.Path(".env").read_text().splitlines() if line and not line.startswith("#") and "=" in line for k, v in [line.split("=", 1)]}; print(env.get("PROMETHEUS_PORT", "9090"))')"
+          pg_up_ok=0
+          for _ in $(seq 1 24); do
+            if python3 -c 'import json,sys,urllib.request; url="http://127.0.0.1:%s/api/v1/query?query=pg_up"%sys.argv[1]; body=json.load(urllib.request.urlopen(url, timeout=5)); values=[row.get("value",["",""])[1] for row in body.get("data",{}).get("result",[])]; sys.exit(0 if "1" in values else 1)' "$prom_port"; then
+              pg_up_ok=1
+              break
+            fi
+            sleep 5
+          done
+          if [[ "$pg_up_ok" != 1 ]]; then
+            echo "pg_up is not 1. Container status alone is not readiness."
+            echo "Previous commit: $PREVIOUS_SHA"
+            exit 1
+          fi
+
+          docker compose -f docker-compose.monitoring.yml ps
+          echo "Deployment completed: $DEPLOY_SHA"
+          echo "Automatic rollback is not performed. Previous commit: $PREVIOUS_SHA"
+          echo "This repository has no application migrations. Checking out the previous SHA does not undo schema changes made outside this repository."
+          REMOTE
+
+      - name: Remove SSH credentials
+        if: always()
+        run: |
+          rm -f "$HOME/.ssh/deploy_key"
+          rm -f "$HOME/.ssh/known_hosts"
