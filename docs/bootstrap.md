@@ -19,6 +19,8 @@ Ansible запускается с Linux. На Windows это WSL. Отдельн
 
 Checkout `/opt/swarmhouse/swarmhouse-devops`, каталог env и cron бэкапа принадлежат root. Иначе `deploy` мог бы подменить compose или env, а скрипт применил бы их от root. Ansible копирует `scripts/infra-deploy.sh` в `/usr/local/sbin/swarmhouse-infra-deploy`. Правка скрипта попадает на сервер только после повторного запуска Ansible: CD сам root-скрипт не обновляет.
 
+Серверы, настроенные до перехода на sudo, пересоздаются: playbook владельцев checkout, env и data не переносит и останавливается на первой проверке владельца.
+
 Кто может смержить в `main`, тот фактически получает root на VPS: compose из `main` применяется от root. Нужен branch protection на `main`: обязательное ревью и запрет прямых пушей.
 
 Каталоги:

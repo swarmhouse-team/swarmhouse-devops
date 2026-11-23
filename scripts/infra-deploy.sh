@@ -2,6 +2,7 @@
 set -euo pipefail
 umask 077
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export HOME=/root
 
 [[ $EUID -eq 0 ]] || { echo "Запускать через sudo" >&2; exit 2; }
 [[ $# -eq 1 ]] || { echo "Нужен ровно один аргумент" >&2; exit 2; }

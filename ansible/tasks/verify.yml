@@ -31,12 +31,16 @@
 - name: sudo deploy разрешён только для скрипта деплоя
   ansible.builtin.assert:
     that:
-      - "'/usr/local/sbin/swarmhouse-infra-deploy' in deploy_sudo.stdout"
-      - "'(ALL) ALL' not in deploy_sudo.stdout"
+      - deploy_sudo_rules | length == 1
+      - deploy_sudo_rules[0] is search('NOPASSWD:\s*/usr/local/sbin/swarmhouse-infra-deploy')
     fail_msg: >-
-      sudo -l для {{ deploy_user }} должен разрешать только
-      /usr/local/sbin/swarmhouse-infra-deploy и не должен содержать (ALL) ALL.
+      sudo -l для {{ deploy_user }} должен содержать ровно одно правило:
+      NOPASSWD /usr/local/sbin/swarmhouse-infra-deploy. Найдено: {{ deploy_sudo_rules }}
     quiet: true
+  vars:
+    deploy_sudo_rules: >-
+      {{ deploy_sudo.stdout.split('may run the following commands')[-1].splitlines()
+         | map('trim') | select | list }}
 
 - name: Проверить владельцев и права каталогов
   ansible.builtin.stat:
