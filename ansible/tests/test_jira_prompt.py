@@ -9,8 +9,6 @@ from deploy_checks import (  # noqa: E402
     apply_jira_lines,
     jira_answers_ready,
     jira_missing,
-    jira_prompt_plan,
-    jira_value_ok,
 )
 from env_parse import parse_env  # noqa: E402
 from actions_key import env_copy_action  # noqa: E402
@@ -23,23 +21,14 @@ BOOTSTRAP = (ROOT / "bootstrap.yml").read_text(encoding="utf-8")
 
 def main():
     full = {"JIRA_USER": "ops@example.com", "JIRA_API_TOKEN": "token-value"}
-    assert jira_prompt_plan(True, full, 1, True) == {"action": "skip", "ask": []}
     assert jira_missing(full) == []
-
-    only_token = {"JIRA_USER": "ops@example.com", "GF_SECURITY_ADMIN_USER": "admin"}
-    assert jira_prompt_plan(True, only_token, 1, True)["ask"] == ["JIRA_API_TOKEN"]
-
-    assert jira_prompt_plan(True, {}, 1, True)["ask"] == ["JIRA_USER", "JIRA_API_TOKEN"]
-    assert jira_prompt_plan(False, {}, 1, True)["action"] == "skip"
-    assert jira_prompt_plan(True, {}, 2, True)["reason"] == "multi_host"
-    assert jira_prompt_plan(True, {}, 1, False)["reason"] == "not_interactive"
 
     assert jira_answers_ready(["JIRA_USER"], {"JIRA_USER": ""}) is False
     assert jira_answers_ready(["JIRA_USER"], {"JIRA_USER": "   "}) is False
     assert jira_answers_ready(["JIRA_USER", "JIRA_API_TOKEN"], {"JIRA_USER": "ops@example.com"}) is False
-    assert jira_value_ok('token"quoted') is False
-    assert jira_value_ok("token with space") is False
-    assert jira_value_ok("ops@example.com") is True
+    assert jira_answers_ready(["JIRA_USER"], {"JIRA_USER": 'token"quoted'}) is False
+    assert jira_answers_ready(["JIRA_USER"], {"JIRA_USER": "token with space"}) is False
+    assert jira_answers_ready(["JIRA_USER"], {"JIRA_USER": "ops@example.com"}) is True
 
     original = "\n".join(
         [
@@ -65,7 +54,6 @@ def main():
     assert parsed["JIRA_USER"] == "ops@example.com"
     assert parsed["JIRA_API_TOKEN"] == "token-value"
     assert "GF_SECURITY_ADMIN_PASSWORD=keep-this-secret" in updated
-    assert jira_prompt_plan(True, parsed, 1, True)["action"] == "skip"
     again = apply_jira_lines(updated, {})
     assert again == updated
 
@@ -88,13 +76,8 @@ def main():
     assert TASK.index("Проверить введённые значения") < TASK.index("Записать только JIRA_USER")
     assert "mode: \"0600\"" in TASK
 
-    print("present skip", jira_prompt_plan(True, full, 1, True)["action"])
-    print("ask token", jira_prompt_plan(True, only_token, 1, True)["ask"])
-    print("ask both", jira_prompt_plan(True, {}, 1, True)["ask"])
     print("empty refused", jira_answers_ready(["JIRA_API_TOKEN"], {"JIRA_API_TOKEN": ""}))
-    print("services off", jira_prompt_plan(False, {}, 1, True)["action"])
     print("conflict", env_copy_action(True, True, same, "b" * 64))
-    print("rewrite skip", jira_prompt_plan(True, parsed, 1, True)["action"])
     print("ok")
 
 

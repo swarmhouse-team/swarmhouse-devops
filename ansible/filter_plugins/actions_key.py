@@ -16,7 +16,7 @@ def _flag(value):
     return "na"
 
 
-def public_material(text):
+def _ssh_material(text):
     parts = str(text or "").strip().split()
     if len(parts) < 2 or not str(parts[0]).startswith("ssh-"):
         return None
@@ -24,8 +24,8 @@ def public_material(text):
 
 
 def same_public(left, right):
-    first = public_material(left)
-    second = public_material(right)
+    first = _ssh_material(left)
+    second = _ssh_material(right)
     return first is not None and first == second
 
 
@@ -54,7 +54,7 @@ def _authorized_tokens(line):
     return tokens
 
 
-def authorized_material(line):
+def _line_material(line):
     tokens = _authorized_tokens(line)
     for index, token in enumerate(tokens[:-1]):
         if token.startswith(("ssh-", "ecdsa-", "sk-ssh-", "sk-ecdsa-")):
@@ -63,14 +63,14 @@ def authorized_material(line):
 
 
 def authorized_has_key(text, public):
-    wanted = public_material(public)
+    wanted = _ssh_material(public)
     if wanted is None:
         return False
     for line in str(text or "").splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
-        if authorized_material(stripped) == wanted:
+        if _line_material(stripped) == wanted:
             return True
     return False
 
@@ -118,9 +118,7 @@ def env_copy_action(server_exists, local_exists, server_checksum=None, local_che
 class FilterModule:
     def filters(self):
         return {
-            "public_material": public_material,
             "same_public": same_public,
-            "authorized_material": authorized_material,
             "authorized_has_key": authorized_has_key,
             "classify_actions_key": classify_actions_key,
             "local_dirs_conflict": local_dirs_conflict,

@@ -37,7 +37,7 @@ def jira_missing(env):
     return missing
 
 
-def jira_value_ok(value):
+def _env_value_safe(value):
     """Значение, которое parse_env и env_file Compose сохраняют без shell-экранирования."""
     text = "" if value is None else str(value)
     if text == "" or text != text.strip():
@@ -52,20 +52,7 @@ def jira_answers_ready(missing, answers):
     answers = dict(answers or {})
     if set(answers) != set(missing) or set(answers) - set(JIRA_KEYS):
         return False
-    return all(jira_value_ok(answers[key]) for key in missing)
-
-
-def jira_prompt_plan(deploy_services, env, host_count, interactive):
-    if str(deploy_services).strip().lower() not in ("true", "yes", "1") and deploy_services is not True:
-        return {"action": "skip", "ask": []}
-    missing = jira_missing(env)
-    if not missing:
-        return {"action": "skip", "ask": []}
-    if int(host_count) != 1:
-        return {"action": "fail", "reason": "multi_host", "ask": missing}
-    if not interactive:
-        return {"action": "fail", "reason": "not_interactive", "ask": missing}
-    return {"action": "ask", "ask": missing}
+    return all(_env_value_safe(answers[key]) for key in missing)
 
 
 def apply_jira_lines(text, updates):
@@ -73,7 +60,7 @@ def apply_jira_lines(text, updates):
     if set(updates) - set(JIRA_KEYS):
         raise ValueError("refusing keys")
     for value in updates.values():
-        if not jira_value_ok(value):
+        if not _env_value_safe(value):
             raise ValueError("unsafe value")
     lines = str(text or "").splitlines()
     seen = set()
@@ -174,9 +161,7 @@ class FilterModule:
             "is_ident": is_ident,
             "jira_problems": jira_problems,
             "jira_missing": jira_missing,
-            "jira_value_ok": jira_value_ok,
             "jira_answers_ready": jira_answers_ready,
-            "jira_prompt_plan": jira_prompt_plan,
             "apply_jira_lines": apply_jira_lines,
             "backup_dir_from_log": backup_dir_from_log,
             "public_failure_text": public_failure_text,

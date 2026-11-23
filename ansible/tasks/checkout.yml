@@ -116,4 +116,3 @@
 - name: Запомнить, клонировали ли репозиторий сейчас
   ansible.builtin.set_fact:
     checkout_created: "{{ not checkout_stat.stat.exists }}"
-    checkout_switched: false

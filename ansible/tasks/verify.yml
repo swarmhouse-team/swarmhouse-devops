@@ -39,7 +39,7 @@
     quiet: true
   vars:
     deploy_sudo_rules: >-
-      {{ deploy_sudo.stdout.split('may run the following commands')[-1].splitlines()
+      {{ deploy_sudo.stdout.split('may run the following commands')[-1].splitlines()[1:]
          | map('trim') | select | list }}
 
 - name: Проверить владельцев и права каталогов
