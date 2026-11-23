@@ -90,6 +90,7 @@ docker-compose.override.yaml
 # ============================================================
 .idea/
 .vscode/
+/refactor-plan.md
 .DS_Store
 ._*
 Thumbs.db
