@@ -57,7 +57,7 @@ def main():
         server_public=False,
     )
     assert again["action"] == "install"
-    assert again["reason"] == "no_legacy"
+    assert again["reason"] == "keep"
     assert plan(
         local_private=True,
         local_public=True,
@@ -88,25 +88,13 @@ def main():
         local_matches_derived="yes",
         server_private=True,
         server_public=True,
-        server_pub_matches_local="yes",
-        server_derived_matches_local="yes",
-        server_halves_match="yes",
-    )["reason"] == "legacy_left"
-
-    different_legacy = plan(
-        local_private=True,
-        local_public=True,
-        local_matches_derived="yes",
-        server_private=True,
-        server_public=True,
-    )
-    assert different_legacy == {"action": "install", "reason": "legacy_left"}
+    )["reason"] == "keep"
     assert plan(
         local_private=False,
         local_public=False,
         server_private=True,
         server_public=True,
-    )["reason"] == "legacy_without_local"
+    )["reason"] == "new_install"
 
     same = "a" * 64
     assert env_copy_action(True, True, same, same) == "keep"
@@ -132,7 +120,6 @@ def main():
     fetch = (TASKS / "fetch.yml").read_text(encoding="utf-8")
     assert "actions_key_migrate" not in actions
     assert "ansible.builtin.fetch:" not in actions
-    assert '-f\n      - "{{ devops_actions_key }}"' not in actions
     assert '-f\n      - "{{ local_vps_dir }}/github-actions/id_ed25519"' in actions
     assert "exclusive: false" in actions
     assert "delegate_to: localhost" in actions
@@ -173,8 +160,6 @@ def main():
     print("repeat", again["action"])
     print("recreate", recreated["action"])
     print("orphan", plan(local_private=False, local_public=True)["reason"])
-    print("legacy left", different_legacy["reason"])
-    print("legacy without local", plan(local_private=False, server_private=True)["reason"])
     print("env keep", env_copy_action(True, True, same, same))
     print("env conflict", env_copy_action(True, True, same, "b" * 64))
     print("env block", env_copy_action(False, True))

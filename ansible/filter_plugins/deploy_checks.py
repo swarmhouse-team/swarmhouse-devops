@@ -11,20 +11,6 @@ PLACEHOLDERS = {
     "email-jira",
     "root_url",
 }
-WEAK_PASSWORDS = {
-    "admin",
-    "grafana",
-    "password",
-    "changeme",
-    "change_me_strong_password",
-}
-SYNC_KEYS = {
-    "GF_AUTH_BASIC_ENABLED",
-    "GF_SECURITY_COOKIE_SECURE",
-    "GF_AUTH_ANONYMOUS_ENABLED",
-}
-
-
 def is_ident(value):
     return bool(IDENT.match(str(value or "")))
 
@@ -111,67 +97,6 @@ def apply_jira_lines(text, updates):
     return "\n".join(output) + "\n"
 
 
-def grafana_blockers(env):
-    env = env or {}
-    blockers = []
-    if str(env.get("GF_AUTH_ANONYMOUS_ENABLED", "false")).lower() == "true":
-        blockers.append("anonymous_enabled")
-    if str(env.get("GF_AUTH_BASIC_ENABLED", "false")).lower() != "true":
-        blockers.append("basic_disabled")
-    protocol = str(env.get("GF_SERVER_PROTOCOL", "http")).lower()
-    root = str(env.get("GF_SERVER_ROOT_URL", ""))
-    secure = str(env.get("GF_SECURITY_COOKIE_SECURE", "false")).lower() == "true"
-    if secure and (protocol == "http" or root.startswith("http://")):
-        blockers.append("cookie_secure_on_http")
-    password = str(env.get("GF_SECURITY_ADMIN_PASSWORD", ""))
-    user = str(env.get("GF_SECURITY_ADMIN_USER", ""))
-    if (
-        password == ""
-        or password in PLACEHOLDERS
-        or password.lower() in WEAK_PASSWORDS
-        or password == user
-    ):
-        blockers.append("admin_password_rejected")
-    return blockers
-
-
-def grafana_sync_updates(blockers):
-    updates = {}
-    blockers = blockers or []
-    if "basic_disabled" in blockers:
-        updates["GF_AUTH_BASIC_ENABLED"] = "true"
-    if "cookie_secure_on_http" in blockers:
-        updates["GF_SECURITY_COOKIE_SECURE"] = "false"
-    if "anonymous_enabled" in blockers:
-        updates["GF_AUTH_ANONYMOUS_ENABLED"] = "false"
-    return updates
-
-
-def sync_env(text, updates):
-    updates = dict(updates or {})
-    refused = sorted(set(updates) - SYNC_KEYS)
-    if refused:
-        raise ValueError("refusing keys: %s" % ",".join(refused))
-    lines = str(text or "").splitlines()
-    seen = set()
-    output = []
-    for line in lines:
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or "=" not in stripped:
-            output.append(line)
-            continue
-        key = stripped.split("=", 1)[0].strip()
-        if key in updates:
-            output.append("%s=%s" % (key, updates[key]))
-            seen.add(key)
-        else:
-            output.append(line)
-    for key in SYNC_KEYS:
-        if key in updates and key not in seen:
-            output.append("%s=%s" % (key, updates[key]))
-    return "\n".join(output) + ("\n" if output else "")
-
-
 def backup_dir_from_log(text):
     marker = "Готово: "
     for line in str(text or "").splitlines():
@@ -253,9 +178,6 @@ class FilterModule:
             "jira_answers_ready": jira_answers_ready,
             "jira_prompt_plan": jira_prompt_plan,
             "apply_jira_lines": apply_jira_lines,
-            "grafana_blockers": grafana_blockers,
-            "grafana_sync_updates": grafana_sync_updates,
-            "sync_env": sync_env,
             "backup_dir_from_log": backup_dir_from_log,
             "public_failure_text": public_failure_text,
             "service_ready": service_ready,

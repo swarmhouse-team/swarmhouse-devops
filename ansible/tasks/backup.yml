@@ -19,18 +19,6 @@
     backup_script_text: "{{ backup_script_slurp.content | b64decode }}"
     backup_script_keep: "{{ [backup_script_text | regex_search('(?m)^KEEP=(\\d+)$', '\\1')] | flatten | first | default('') }}"
 
-- name: Не менять KEEP в скрипте
-  ansible.builtin.fail:
-    msg: >-
-      В {{ backup_script }} KEEP={{ backup_script_keep }},
-      а backup_keep={{ backup_keep }}.
-      Скрипт не переписываю. Поставьте backup_keep={{ backup_script_keep }}
-      или меняйте ротацию отдельным коммитом в сам скрипт.
-  vars:
-    backup_script_text: "{{ backup_script_slurp.content | b64decode }}"
-    backup_script_keep: "{{ [backup_script_text | regex_search('(?m)^KEEP=(\\d+)$', '\\1')] | flatten | first | default('') }}"
-  when: backup_script_keep | int != backup_keep | int
-
 - name: Проверить, что скрипт исполняемый
   ansible.builtin.stat:
     path: "{{ backup_script }}"

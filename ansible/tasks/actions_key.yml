@@ -19,25 +19,13 @@
   delegate_to: localhost
   become: false
 
-- name: Проверить legacy-файлы ключа на VPS
-  ansible.builtin.stat:
-    path: "{{ item }}"
-  loop:
-    - "{{ devops_actions_key }}"
-    - "{{ devops_actions_pub }}"
-  loop_control:
-    label: "{{ item }}"
-  register: server_actions_key_stats
-
 - name: Выбрать действие для локальной пары
   ansible.builtin.set_fact:
     actions_key_plan: >-
       {{
         {
           'local_private': local_actions_key_stats.results[0].stat.exists,
-          'local_public': local_actions_key_stats.results[1].stat.exists,
-          'server_private': server_actions_key_stats.results[0].stat.exists,
-          'server_public': server_actions_key_stats.results[1].stat.exists
+          'local_public': local_actions_key_stats.results[1].stat.exists
         } | classify_actions_key
       }}
 
@@ -49,17 +37,6 @@
       Восстановите приватный ключ из защищённой копии или заведите новое окружение
       с другим local_vps_dir.
   when: actions_key_plan.reason == 'orphan_local_pub'
-
-- name: Остановить, если на VPS остался legacy-ключ, а локальной пары нет
-  ansible.builtin.fail:
-    msg: >-
-      На VPS есть {{ devops_actions_key }} или {{ devops_actions_pub }},
-      а локального приватного ключа нет. Новую пару не создаю и legacy-файлы не скачиваю.
-      Восстановление прежнего ключа: положите сохранённую пару в
-      {{ local_vps_dir }}/github-actions и повторите bootstrap.
-      Новая идентичность — отдельное решение: playbook его не принимает,
-      пока на VPS лежат legacy-файлы, а локальной пары нет.
-  when: actions_key_plan.reason == 'legacy_without_local'
 
 - name: Получить публичную часть из локального приватного ключа
   ansible.builtin.command:
@@ -195,23 +172,3 @@
     manage_dir: true
   no_log: true
   diff: false
-
-- name: Положить публичный ключ на VPS, если legacy-файлов нет
-  ansible.builtin.copy:
-    dest: "{{ devops_actions_pub }}"
-    content: "{{ local_actions_pub_slurp.content | b64decode }}"
-    owner: root
-    group: root
-    mode: "0644"
-    force: false
-  no_log: true
-  diff: false
-  when:
-    - not (server_actions_key_stats.results[0].stat.exists | bool)
-    - not (server_actions_key_stats.results[1].stat.exists | bool)
-
-- name: Запомнить, остался ли legacy-приватный ключ
-  ansible.builtin.stat:
-    path: "{{ devops_actions_key }}"
-    checksum_algorithm: sha256
-  register: remote_actions_private

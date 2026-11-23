@@ -58,7 +58,6 @@ conf/grafana/
 scripts/backup-postgres.sh
 scripts/restore-postgres-test.sh
 ansible/bootstrap.yml
-ansible/cleanup-actions-key.yml
 .github/workflows/infra-ci.yml
 .github/workflows/infra-cd.yml
 data/                  # на сервере, в Git не входит

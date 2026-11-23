@@ -10,7 +10,7 @@
 
 - name: Зафиксировать образ PostgreSQL
   ansible.builtin.set_fact:
-    postgres_image: "{{ deploy_image_prefix.postgres }}:{{ deploy_env.POSTGRES_TAG }}"
+    postgres_image: "postgres:{{ deploy_env.POSTGRES_TAG }}"
 
 - name: Проверить, есть ли образ PostgreSQL локально
   ansible.builtin.command:

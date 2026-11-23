@@ -79,8 +79,6 @@ def classify_actions_key(state):
     state = state or {}
     local_private = _bool(state.get("local_private"))
     local_public = _bool(state.get("local_public"))
-    server_private = _bool(state.get("server_private"))
-    server_public = _bool(state.get("server_public"))
     derived = _flag(state.get("local_matches_derived"))
 
     if local_public and not local_private:
@@ -90,12 +88,8 @@ def classify_actions_key(state):
     if local_private and not local_public:
         return {"action": "derive", "reason": "missing_local_pub"}
     if not local_private:
-        if server_private or server_public:
-            return {"action": "fail", "reason": "legacy_without_local"}
         return {"action": "generate", "reason": "new_install"}
-    if server_private or server_public:
-        return {"action": "install", "reason": "legacy_left"}
-    return {"action": "install", "reason": "no_legacy"}
+    return {"action": "install", "reason": "keep"}
 
 
 def local_dirs_conflict(paths):

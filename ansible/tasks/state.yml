@@ -10,22 +10,6 @@
   register: all_container_names
   changed_when: false
 
-- name: Собрать найденные контейнеры проекта
-  ansible.builtin.set_fact:
-    existing_project_containers: >-
-      {{
-        project_containers | intersect(all_container_names.stdout_lines)
-      }}
-
-- name: Отметить контейнеры Jira, не изменяя их
-  ansible.builtin.set_fact:
-    existing_jira_containers: >-
-      {{
-        all_container_names.stdout_lines
-        | select('search', 'jira')
-        | list
-      }}
-
 - name: Проверить каталоги данных checkout
   ansible.builtin.stat:
     path: "{{ devops_checkout }}/data/{{ item }}"

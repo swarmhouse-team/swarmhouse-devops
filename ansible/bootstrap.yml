@@ -1,6 +1,5 @@
 ---
 # Подготовка VPS. Контейнеры запускаются только при deploy_services=true.
-# Cleanup ключа Actions — отдельный playbook cleanup-actions-key.yml.
 - name: Подготовить VPS к swarmhouse
   hosts: all
   become: true
