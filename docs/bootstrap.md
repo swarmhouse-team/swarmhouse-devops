@@ -15,13 +15,17 @@ Ansible запускается с Linux. На Windows это WSL. Отдельн
 
 Если `docker --version` и `docker compose version` уже работают, пакеты Docker не переустанавливаются и источник apt не меняется. Если Docker есть, а Compose plugin нет, playbook останавливается.
 
-Пользователь `deploy` создаётся без пароля и без sudo. Его добавляют в группу `docker`. Группа `docker` даёт доступ к демону и фактически равна root на этом хосте.
+Пользователь `deploy` создаётся без пароля и без группы `docker`. Доступ к сокету Docker равен root, поэтому группы `docker` у него нет. `sudo` без пароля разрешён только для `/usr/local/sbin/swarmhouse-infra-deploy`. Других команд sudo нет.
+
+Checkout `/opt/swarmhouse/swarmhouse-devops`, каталог env и cron бэкапа принадлежат root. Иначе `deploy` мог бы подменить compose или env, а скрипт применил бы их от root. Ansible копирует `scripts/infra-deploy.sh` в `/usr/local/sbin/swarmhouse-infra-deploy`. Правка скрипта попадает на сервер только после повторного запуска Ansible: CD сам root-скрипт не обновляет.
+
+Кто может смержить в `main`, тот фактически получает root на VPS: compose из `main` применяется от root. Нужен branch protection на `main`: обязательное ревью и запрет прямых пушей.
 
 Каталоги:
 
 - `/opt/swarmhouse`
-- `/opt/swarmhouse/swarmhouse-devops` — checkout `https://github.com/swarmhouse-team/swarmhouse-devops.git`
-- `/opt/swarmhouse/secrets/env` — канонические env, режим `0700`, владелец `deploy`
+- `/opt/swarmhouse/swarmhouse-devops` — checkout `https://github.com/swarmhouse-team/swarmhouse-devops.git`, владелец `root`, режим `0755`
+- `/opt/swarmhouse/secrets/env` — канонические env, режим `0700`, владелец `root`
 - `/opt/swarmhouse/secrets/github-actions` — каталог legacy-ключей Actions, режим `0700`, владелец `root`. Новый приватный ключ сюда не кладётся
 
 Compose по-прежнему читает `.env` и `env/*.env` внутри checkout. Эти пути — ссылки на `/opt/swarmhouse/secrets/env`. Отслеживаемые файлы секретов не получают. Если такой путь уже есть и это не ссылка на каталог секретов и не тот же файл, playbook останавливается.
@@ -79,7 +83,7 @@ swarmhouse-test:
 
 `devops_git_version` — та же переменная, что в `group_vars/all.yml`. Там по умолчанию `main`, ветка CD. В тестовом inventory её переопределяют. Вместо `<ветка или тег>` подставьте реальное имя. Эта ветка или тег уже должны быть запушены в GitHub: playbook клонирует удалённый репозиторий, локальный незапушенный коммит на VM не попадёт.
 
-Новый checkout создаётся сразу на этом ref, от пользователя `deploy`. Если каталог уже есть и HEAD другой, playbook останавливается. Переход на указанный ref — только с `allow_checkout_switch: true` (или `-e allow_checkout_switch=true`). По умолчанию флаг `false`. Перед переходом проверяются origin и чистое дерево отслеживаемых файлов. `reset --hard`, `clean`, force и stash не используются. Env, симлинки и секреты не удаляются. Если ref не запушен или в нём есть отслеживаемые env-файлы, переход не выполняется.
+Новый checkout создаётся сразу на этом ref, от пользователя `root`. Если каталог уже есть и HEAD другой, playbook останавливается. Переход на указанный ref — только с `allow_checkout_switch: true` (или `-e allow_checkout_switch=true`). По умолчанию флаг `false`. Перед переходом проверяются origin и чистое дерево отслеживаемых файлов. `reset --hard`, `clean`, force и stash не используются. Env, симлинки и секреты не удаляются. Если ref не запушен или в нём есть отслеживаемые env-файлы, переход не выполняется.
 
 ## 3. Административный ключ и sudo
 
@@ -163,7 +167,7 @@ docker compose -f docker-compose.monitoring.yml up -d
 
 Если контейнер с тем же именем уже принадлежит другому project name, другому каталогу или его хеш Compose не совпадает с файлом, запуск останавливается. `compose down`, удаление volumes, `--force-recreate` и обновление уже скачанных образов не выполняются. Отсутствующий локальный образ может быть скачан один раз (`pull: missing`). При ошибке в отчёт попадает `docker compose ps` (имя и статус), без env и логов. Миграций приложения в этом репозитории нет, и playbook их не запускает.
 
-Для старта создаются только отсутствующие сети `infra` и `monitoring`. Каталог `data` принадлежит `deploy`, режим `0755`: иначе `0700` родителя закрывает `deploy` запись `data/backup`. Корни `data/postgres`, `data/redis`, `data/prometheus` и `data/grafana` пользователю `deploy` не отдаются. Числовой UID в репозиторий не записан. У PostgreSQL playbook вызывает `id postgres` внутри используемого образа. У Redis, Prometheus и Grafana — `id` от пользователя по умолчанию этого образа. Режим только у корня каталога — `0700`, без рекурсивного `chown`. Пути mount и `PGDATA` не меняются. Повторный запуск не возвращает эти корни пользователю `deploy`. Перед стартом проверяется проход этого пользователя в каталог; для PostgreSQL — ещё и путь до `PGDATA`. На сервере этот шаг пока не подтверждался: последний прогон тестовой VM шёл с `deploy_services=false` и каталоги данных не готовил.
+Для старта создаются только отсутствующие сети `infra` и `monitoring`. Каталог `data` принадлежит `root`, режим `0755`. Корни `data/postgres`, `data/redis`, `data/prometheus` и `data/grafana` пользователю `deploy` не отдаются. Числовой UID в репозиторий не записан. У PostgreSQL playbook вызывает `id postgres` внутри используемого образа. У Redis, Prometheus и Grafana — `id` от пользователя по умолчанию этого образа. Режим только у корня каталога — `0700`, без рекурсивного `chown`. Пути mount и `PGDATA` не меняются. Повторный запуск не возвращает эти корни пользователю `deploy`. Перед стартом проверяется проход этого пользователя в каталог; для PostgreSQL — ещё и путь до `PGDATA`. На сервере этот шаг пока не подтверждался: последний прогон тестовой VM шёл с `deploy_services=false` и каталоги данных не готовил.
 
 Playbook на боевой VPS запускает человек. Из среды разработки он сам не стартует.
 
@@ -229,7 +233,7 @@ ssh -i "$HOME/.swarmhouse/vps/<имя хоста из inventory>/github-actions/
   deploy@<хост>
 ```
 
-Успешный вход этим ключом playbook не обещает: это отдельная проверка. Новая сессия нужна, чтобы группа `docker` была видна процессу.
+Успешный вход этим ключом playbook не обещает: это отдельная проверка. У `deploy` нет группы `docker`. Общего sudo нет. С этой сессии разрешена одна команда: `sudo -n /usr/local/sbin/swarmhouse-infra-deploy <40-hex SHA>`. `sudo -n bash` и `docker ps` должны отказать.
 
 ## 8. Убрать legacy-приватный ключ с VPS
 
@@ -253,9 +257,9 @@ ansible-playbook -i inventory.test.yml cleanup-actions-key.yml --ask-become-pass
 
 Используется `scripts/backup-postgres.sh`. Второй системы бэкапов нет. Скрипт сам берёт `flock` на `scripts/.backup-postgres.lock`, пишет в `data/backup` относительно checkout и оставляет `KEEP=5` каталогов. Playbook это число не меняет: `backup_keep` должен быть `5`, иначе запуск останавливается.
 
-Пользователь cron — `backup_user` (`deploy`). Расписание по умолчанию — каждый день в 03:15, переменные `backup_minute`, `backup_hour`, `backup_day`, `backup_month`, `backup_weekday`. Имя задачи постоянное: `swarmhouse-postgres-backup`. Другие строки crontab не удаляются. Если `backup-postgres.sh` уже упомянут в чужом задании, playbook останавливается и второе задание не создаёт.
+Пользователь cron — `root` (`backup_user`): скрипт делает `docker exec`. Задача с тем же именем в crontab `deploy` удаляется. Расписание по умолчанию — каждый день в 03:15, переменные `backup_minute`, `backup_hour`, `backup_day`, `backup_month`, `backup_weekday`. Имя задачи постоянное: `swarmhouse-postgres-backup`. Другие строки crontab не удаляются. Если `backup-postgres.sh` уже упомянут в чужом задании, playbook останавливается и второе задание не создаёт.
 
-На Ubuntu и Debian ставится пакет `cron`, сервис `cron` включается. После `healthy` у контейнера `postgres` скрипт запускается от `deploy`. Затем `scripts/restore-postgres-test.sh` восстанавливает этот дамп в новую базу `restore_test_*`, playbook проверяет `current_database()` и удаляет только её. Рабочая база не перезаписывается. Если любой шаг не прошёл, cron-задача не добавляется. Если postgres не запущен и `deploy_services=false`, тестовый бэкап и cron-задача пропускаются. Каталог `data/backup` лежит на том же VPS. Внешней копии репозиторий не создаёт: потеря диска VPS уничтожает и данные, и эти бэкапы. `KEEP=5`.
+На Ubuntu и Debian ставится пакет `cron`, сервис `cron` включается. После `healthy` у контейнера `postgres` скрипт запускается от `root`. Затем `scripts/restore-postgres-test.sh` восстанавливает этот дамп в новую базу `restore_test_*`, playbook проверяет `current_database()` и удаляет только её. Рабочая база не перезаписывается. Если любой шаг не прошёл, cron-задача не добавляется. Если postgres не запущен и `deploy_services=false`, тестовый бэкап и cron-задача пропускаются. Каталог `data/backup` лежит на том же VPS. Внешней копии репозиторий не создаёт: потеря диска VPS уничтожает и данные, и эти бэкапы. `KEEP=5`.
 
 Задание вызывает абсолютный путь скрипта, рабочий каталог — checkout, `PATH` задан в строке cron. Ошибки дописываются в `/var/log/swarmhouse-postgres-backup.log`. Скрипт не печатает пароли.
 
@@ -267,7 +271,7 @@ ansible-playbook -i inventory.test.yml cleanup-actions-key.yml --ask-become-pass
 
 Отдельная тестовая VM `swarmhouse-test`, повторный bootstrap: `ok=83`, `changed=0`, `unreachable=0`, `failed=0`, `skipped=131`, `deploy_services=false`. `changed=0` значит, что уже существующие Docker, пользователь `deploy` и checkout менять не пришлось. Checkout был `/opt/swarmhouse/swarmhouse-devops`, отчёт показал версию `swarmhouse-53`. Контейнеров проекта не было. Env лежали в `/opt/swarmhouse/secrets/env`, отчёт указал режим `0600` и владельца `deploy`. Приватный файл Actions на VM ещё оставался. Вход Actions, тестовый бэкап и cron не выполнялись.
 
-Этот прогон не подтверждает чистую установку после последних правок playbook, ветку установки Docker через `deb822_repository` (она выполняется только если клиента Docker ещё нет), запуск и health сервисов, работу Actions и бэкап на этой VM. Пакет `acl` в список базовых пакетов входит и ставится от root до первого `become_user: deploy`, но на этой VM он мог быть поставлен раньше вручную: отчёт `changed=0` это не различает.
+Этот прогон не подтверждает чистую установку после последних правок playbook, ветку установки Docker через `deb822_repository` (она выполняется только если клиента Docker ещё нет), запуск и health сервисов, работу Actions и бэкап на этой VM. Пакет `acl` в список базовых пакетов входит. Git-задачи checkout идут от root, отдельного `become_user: deploy` у них нет.
 
 В коде, отдельно от серверной проверки, сейчас есть: выбор `devops_git_version` и остановка при чужом HEAD, пока `allow_checkout_switch` не включён; чтение env из `content` модуля `slurp`, а не из `rc`; системные факты через `ansible_facts`; установка нового Docker через `deb822_repository`, без смены источника, если Docker уже работает.
 
@@ -278,7 +282,7 @@ ansible-playbook -i inventory.test.yml cleanup-actions-key.yml --ask-become-pass
 - Результат цикла лежит во вложенном элементе. У `stat` или `command` с `register` и `loop` поля вроде `stat` и `stdout` читаются как `item.stat` и `item.item`, а не как будто сам элемент — исходный словарь списка. Ошибка вида «dict object has no attribute» на таком поле означает неверный уровень, а не отсутствие файла.
 - `slurp` при успехе отдаёт `content` в base64 и не отдаёт `rc`. Проверять нужно `content is defined`, затем `b64decode`. Подстановка `item.rc | default(1)` помечает удачный `slurp` как провал и затирает разобранный env.
 - Локальный и серверный приватный ключ Actions при расхождении не перезаписываются. Сначала сравниваются хеши файлов и публичный отпечаток. Разный комментарий при том же ключе конфликтом не считается. Пока файлы различаются, playbook не выбирает, какая копия каноническая. Для текущей схемы канонический приватный ключ — локальный файл на управляющей машине; legacy-файл на VPS bootstrap не скачивает и не удаляет. Удаление legacy — только `cleanup-actions-key.yml` и только при совпадении байтов.
-- `become_user: deploy` падает на временном файле с `chmod: invalid mode: A+user:deploy:rx:allow`, если на хосте нет `acl` и `setfacl`. Пакет `acl` стоит в базовом списке и ставится от root раньше checkout. Проверку временных файлов Ansible не отключают и каталоги не открывают на `0777`.
+- Прежняя схема с `become_user: deploy` падала на временном файле с `chmod: invalid mode: A+user:deploy:rx:allow`, если на хосте не было `acl` и `setfacl`. Сейчас checkout и env пишутся от root. Пакет `acl` остаётся в базовом списке. Проверку временных файлов Ansible не отключают и каталоги не открывают на `0777`.
 
 ## 10. Что bootstrap не делает
 

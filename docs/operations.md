@@ -2,6 +2,12 @@
 
 Команды выполняются из корня репозитория. CD выкладывает этот каталог в `/opt/swarmhouse/swarmhouse-devops`: сначала `docker-compose.yml`, затем `docker-compose.monitoring.yml`.
 
+GitHub Actions входит по SSH как `deploy` и запускает только `sudo -n /usr/local/sbin/swarmhouse-infra-deploy <SHA>`. Скрипт работает от root: `git fetch`, checkout и `docker compose`. Пользователь `deploy` не в группе `docker`. Checkout, env и cron бэкапа принадлежат root.
+
+`scripts/infra-deploy.sh` на сервер копирует Ansible. CD этот файл не обновляет: правка скрипта попадает на VPS только после повторного запуска playbook.
+
+Кто может смержить в `main`, тот фактически получает root на VPS, потому что compose из `main` применяется от root. Нужен branch protection на `main`: обязательное ревью и запрет прямых пушей.
+
 ## Что должно быть на сервере
 
 - Linux-хост. `node-exporter` монтирует `/proc`, `/sys` и `/`. cAdvisor монтирует `/`, `/var/run`, `/sys`, `/var/lib/docker`, `/dev/disk` и запускается с `privileged: true`.
