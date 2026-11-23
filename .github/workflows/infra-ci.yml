@@ -32,6 +32,14 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Check infra deploy script
+        run: |
+          set -euo pipefail
+          bash -n scripts/infra-deploy.sh
+          if command -v shellcheck >/dev/null 2>&1; then
+            shellcheck scripts/infra-deploy.sh
+          fi
+
       - name: Run Ansible filter checks
         run: |
           set -euo pipefail

@@ -4,14 +4,14 @@
     path: "{{ devops_checkout }}"
   register: checkout_stat
 
-- name: Остановить, если checkout существует и принадлежит не deploy
+- name: Остановить, если checkout существует и принадлежит не root
   ansible.builtin.fail:
     msg: >-
       {{ devops_checkout }} принадлежит {{ checkout_stat.stat.pw_name }},
-      а не {{ deploy_user }}. Владельца не меняю и checkout не перезаписываю.
+      а не root. Владельца не меняю и checkout не перезаписываю.
   when:
     - checkout_stat.stat.exists
-    - checkout_stat.stat.pw_name != deploy_user
+    - checkout_stat.stat.pw_name != 'root'
 
 - name: Остановить, если вместо checkout лежит файл
   ansible.builtin.fail:
@@ -24,8 +24,8 @@
   ansible.builtin.file:
     path: "{{ devops_checkout }}"
     state: directory
-    owner: "{{ deploy_user }}"
-    group: "{{ deploy_group }}"
+    owner: root
+    group: root
     mode: "0755"
   when: not checkout_stat.stat.exists
 
@@ -36,7 +36,6 @@
     version: "{{ devops_git_version }}"
     update: false
     accept_newhostkey: false
-  become_user: "{{ deploy_user }}"
   when: not checkout_stat.stat.exists
 
 - name: Прочитать origin
@@ -45,7 +44,6 @@
     chdir: "{{ devops_checkout }}"
   register: checkout_origin
   changed_when: false
-  become_user: "{{ deploy_user }}"
 
 - name: Проверить, что origin — этот репозиторий
   ansible.builtin.assert:
@@ -63,7 +61,6 @@
     chdir: "{{ devops_checkout }}"
   register: checkout_dirty
   changed_when: false
-  become_user: "{{ deploy_user }}"
 
 - name: Остановить при локальных изменениях checkout
   ansible.builtin.fail:
@@ -87,7 +84,6 @@
   register: checkout_revs
   changed_when: false
   failed_when: false
-  become_user: "{{ deploy_user }}"
 
 - name: Сравнить текущий HEAD с запрошенным ref
   ansible.builtin.set_fact:
@@ -146,7 +142,6 @@
   register: checkout_fetch_ref
   changed_when: false
   failed_when: false
-  become_user: "{{ deploy_user }}"
   when:
     - checkout_existed | bool
     - not (checkout_matches | bool)
@@ -165,7 +160,6 @@
   register: checkout_fetch_tag
   changed_when: false
   failed_when: false
-  become_user: "{{ deploy_user }}"
   when:
     - checkout_existed | bool
     - not (checkout_matches | bool)
@@ -204,7 +198,6 @@
       - env/grafana.env
   register: checkout_tracked_env
   changed_when: false
-  become_user: "{{ deploy_user }}"
   when:
     - checkout_existed | bool
     - not (checkout_matches | bool)
@@ -231,7 +224,6 @@
       - FETCH_HEAD
   register: checkout_switch
   changed_when: true
-  become_user: "{{ deploy_user }}"
   when:
     - checkout_existed | bool
     - not (checkout_matches | bool)
@@ -250,7 +242,6 @@
       - FETCH_HEAD
   register: checkout_head_after
   changed_when: false
-  become_user: "{{ deploy_user }}"
   when: checkout_switch is not skipped
 
 - name: Остановить, если переход не попал в запрошенный коммит

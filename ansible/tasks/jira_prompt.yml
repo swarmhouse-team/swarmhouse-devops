@@ -98,8 +98,8 @@
 - name: Записать только JIRA_USER и JIRA_API_TOKEN
   ansible.builtin.copy:
     dest: "{{ devops_env_dir }}/grafana.env"
-    owner: "{{ deploy_user }}"
-    group: "{{ deploy_group }}"
+    owner: root
+    group: root
     mode: "0600"
     content: "{{ jira_grafana_text | apply_jira_lines(jira_answers) }}"
   no_log: true

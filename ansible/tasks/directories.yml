@@ -15,20 +15,10 @@
   ansible.builtin.fail:
     msg: >-
       {{ devops_root }} принадлежит {{ swarmhouse_root.stat.pw_name }},
-      а не root и не {{ deploy_user }}. Владельца не меняю.
+      а не root. Владельца не меняю.
   when:
     - swarmhouse_root.stat.exists
-    - swarmhouse_root.stat.pw_name not in ['root', deploy_user]
-
-- name: Остановить, если deploy не сможет войти в /opt/swarmhouse
-  ansible.builtin.fail:
-    msg: >-
-      {{ devops_root }} принадлежит root и закрыт для остальных (режим {{ swarmhouse_root.stat.mode }}).
-      Права каталога не меняю: {{ deploy_user }} не сможет открыть checkout.
-  when:
-    - swarmhouse_root.stat.exists
-    - swarmhouse_root.stat.pw_name == 'root'
-    - (swarmhouse_root.stat.mode[-1] | int(0)) % 2 == 0
+    - swarmhouse_root.stat.pw_name != 'root'
 
 - name: Создать /opt/swarmhouse
   ansible.builtin.file:
@@ -58,14 +48,14 @@
     - secret_dir_stats.results[0].stat.exists
     - secret_dir_stats.results[0].stat.pw_name != 'root'
 
-- name: Остановить, если каталог env принадлежит не deploy
+- name: Остановить, если каталог env принадлежит не root
   ansible.builtin.fail:
     msg: >-
       {{ devops_env_dir }} принадлежит {{ secret_dir_stats.results[1].stat.pw_name }},
-      а не {{ deploy_user }}. Рекурсивный chown не делаю.
+      а не root. Рекурсивный chown не делаю.
   when:
     - secret_dir_stats.results[1].stat.exists
-    - secret_dir_stats.results[1].stat.pw_name != deploy_user
+    - secret_dir_stats.results[1].stat.pw_name != 'root'
 
 - name: Остановить, если каталог ключа Actions принадлежит не root
   ansible.builtin.fail:
@@ -85,7 +75,7 @@
     mode: "{{ item.mode }}"
   loop:
     - { path: "{{ devops_secrets }}", owner: root, group: root, mode: "0755", exists: "{{ secret_dir_stats.results[0].stat.exists }}" }
-    - { path: "{{ devops_env_dir }}", owner: "{{ deploy_user }}", group: "{{ deploy_group }}", mode: "0700", exists: "{{ secret_dir_stats.results[1].stat.exists }}" }
+    - { path: "{{ devops_env_dir }}", owner: root, group: root, mode: "0700", exists: "{{ secret_dir_stats.results[1].stat.exists }}" }
     - { path: "{{ devops_actions_dir }}", owner: root, group: root, mode: "0700", exists: "{{ secret_dir_stats.results[2].stat.exists }}" }
   loop_control:
     label: "{{ item.path }}"

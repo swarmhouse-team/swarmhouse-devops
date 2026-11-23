@@ -30,6 +30,9 @@
     - name: Checkout swarmhouse-devops
       ansible.builtin.import_tasks: tasks/checkout.yml
 
+    - name: Скрипт деплоя и sudo
+      ansible.builtin.import_tasks: tasks/deploy_sudo.yml
+
     - name: Env и секреты
       ansible.builtin.import_tasks: tasks/env.yml
 

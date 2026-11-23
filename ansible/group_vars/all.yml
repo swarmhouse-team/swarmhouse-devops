@@ -121,7 +121,8 @@ deploy_image_env:
   alloy-init: ALLOY_VERSION
 
 # Расписание cron. KEEP в scripts/backup-postgres.sh равен 5: другое backup_keep playbook не применяет.
-backup_user: deploy
+# cron под root, потому что скрипт делает docker exec.
+backup_user: root
 backup_cron_name: swarmhouse-postgres-backup
 backup_minute: "15"
 backup_hour: "3"

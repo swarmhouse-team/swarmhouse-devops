@@ -17,16 +17,25 @@
     fail_msg: "Сервис docker должен быть running и enabled."
     quiet: true
 
-- name: Проверить пользователя deploy и группу docker
-  ansible.builtin.command: id {{ deploy_user }}
-  register: deploy_id
+- name: deploy не должен быть в группе docker
+  ansible.builtin.command: id -nG {{ deploy_user }}
+  register: deploy_groups
+  changed_when: false
+  failed_when: "'docker' in deploy_groups.stdout.split()"
+
+- name: Прочитать sudo deploy
+  ansible.builtin.command: sudo -l -U {{ deploy_user }}
+  register: deploy_sudo
   changed_when: false
 
-- name: Остановить, если deploy не в группе docker
+- name: sudo deploy разрешён только для скрипта деплоя
   ansible.builtin.assert:
     that:
-      - "'docker' in deploy_id.stdout"
-    fail_msg: "Пользователь {{ deploy_user }} не входит в группу docker. Новая SSH-сессия это тоже не исправит, пока группа не назначена."
+      - "'/usr/local/sbin/swarmhouse-infra-deploy' in deploy_sudo.stdout"
+      - "'(ALL) ALL' not in deploy_sudo.stdout"
+    fail_msg: >-
+      sudo -l для {{ deploy_user }} должен разрешать только
+      /usr/local/sbin/swarmhouse-infra-deploy и не должен содержать (ALL) ALL.
     quiet: true
 
 - name: Проверить владельцев и права каталогов
@@ -34,9 +43,9 @@
     path: "{{ item.path }}"
   loop:
     - { path: "{{ devops_root }}", owner: root, mode: "" }
-    - { path: "{{ devops_checkout }}", owner: "{{ deploy_user }}", mode: "" }
+    - { path: "{{ devops_checkout }}", owner: root, mode: "" }
     - { path: "{{ devops_secrets }}", owner: root, mode: "0755" }
-    - { path: "{{ devops_env_dir }}", owner: "{{ deploy_user }}", mode: "0700" }
+    - { path: "{{ devops_env_dir }}", owner: root, mode: "0700" }
     - { path: "{{ devops_actions_dir }}", owner: root, mode: "0700" }
   loop_control:
     label: "{{ item.path }}"
@@ -105,12 +114,12 @@
   ansible.builtin.debug:
     msg:
       - "Docker: {{ 'установлен этим запуском' if docker_installed_by_bootstrap | default(false) else 'уже был и оставлен' }}"
-      - "Пользователь {{ deploy_user }}: {{ 'создан' if deploy_user_created | bool else 'уже был' }}, группа docker есть"
+      - "Пользователь {{ deploy_user }} без группы docker. sudo только для /usr/local/sbin/swarmhouse-infra-deploy"
       - "Checkout {{ devops_checkout }}: {{ 'склонирован' if checkout_created | bool else ('переключён' if checkout_switched | default(false) else 'уже был') }}, версия {{ devops_git_version }}"
       - "Контейнеры проекта на хосте: {{ existing_project_containers | default([]) | join(', ') if (existing_project_containers | default([]) | length > 0) else 'не найдены' }}"
       - "Контейнеры с jira в имени, не изменялись: {{ existing_jira_containers | default([]) | join(', ') if (existing_jira_containers | default([]) | length > 0) else 'не найдены' }}"
       - "Непустые каталоги данных, не изменялись: {{ nonempty_data_dirs | default([]) | join(', ') if (nonempty_data_dirs | default([]) | length > 0) else 'не найдены' }}"
-      - "Секреты на VPS: {{ devops_env_dir }} (0600, {{ deploy_user }})"
+      - "Секреты на VPS: {{ devops_env_dir }} (0600, root)"
       - "Канонический приватный ключ Actions: {{ local_vps_dir }}/github-actions/id_ed25519"
       - "Публичный ключ установлен пользователю {{ deploy_user }}. Вход Actions этим фактом не проверен"
       - "DEPLOY_SSH_KEY заполняется содержимым локального приватного ключа. При смене ключа обновите secret и проверьте вход до отзыва старого"
@@ -123,4 +132,4 @@
       - "Новый grafana.env включает вход по паролю и выключает анонимный доступ. Существующий файл меняется только при allow_env_sync=true. Jira-значения bootstrap не генерирует"
       - "Запуск сервисов: {{ 'выполнен, миграций приложения в этом репозитории нет' if deploy_applied | default(false) else 'выключен, deploy_services=false' }}"
       - "Тестовый бэкап: {{ 'дамп создан и проверен восстановлением в restore_test_, рабочая база не перезаписывалась, внешней копии нет' if backup_test_ok | default(false) else 'не делался, cron-задача не добавлялась' }}"
-      - "Cron {{ backup_cron_name }}: {{ 'в crontab ' ~ backup_user if backup_cron_added | default(false) else 'не добавлялась' }}, KEEP скрипта не менялся"
+      - "Cron {{ backup_cron_name }}: {{ 'в crontab root' if backup_cron_added | default(false) else 'не добавлялась' }}, у {{ deploy_user }} её нет, KEEP скрипта не менялся"

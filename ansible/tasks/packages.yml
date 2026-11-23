@@ -9,6 +9,8 @@
     name:
       - git
       - openssh-client
+      - sudo
+      - util-linux
       - ca-certificates
       - curl
       - gnupg

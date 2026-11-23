@@ -36,10 +36,10 @@
     path: "{{ backup_script }}"
   register: backup_script_stat
 
-- name: Остановить, если скрипт принадлежит не deploy
+- name: Остановить, если скрипт принадлежит не root
   ansible.builtin.fail:
     msg: "{{ backup_script }} принадлежит {{ backup_script_stat.stat.pw_name }}. Владельца не меняю."
-  when: backup_script_stat.stat.pw_name != deploy_user
+  when: backup_script_stat.stat.pw_name != 'root'
 
 - name: Дать скрипту бит выполнения
   ansible.builtin.file:
@@ -183,7 +183,6 @@
       ansible.builtin.command: "{{ backup_script }}"
       args:
         chdir: "{{ devops_checkout }}"
-      become_user: "{{ backup_user }}"
       environment:
         PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       register: backup_test
@@ -205,7 +204,6 @@
           - "{{ backup_dir }}"
       args:
         chdir: "{{ devops_checkout }}"
-      become_user: "{{ backup_user }}"
       environment:
         PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       register: restore_test
@@ -274,8 +272,8 @@
   ansible.builtin.file:
     path: "{{ backup_log }}"
     state: touch
-    owner: "{{ backup_user }}"
-    group: "{{ deploy_group }}"
+    owner: root
+    group: root
     mode: "0640"
     modification_time: preserve
     access_time: preserve
@@ -283,6 +281,12 @@
     - postgres_running | bool
     - backup_test is defined
     - backup_test is succeeded
+
+- name: Убрать cron бэкапа из crontab deploy
+  ansible.builtin.cron:
+    name: "{{ backup_cron_name }}"
+    user: "{{ deploy_user }}"
+    state: absent
 
 - name: Добавить единственную cron-задачу бэкапа
   ansible.builtin.cron:

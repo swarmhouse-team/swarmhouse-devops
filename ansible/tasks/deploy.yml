@@ -328,8 +328,8 @@
       ansible.builtin.file:
         path: "{{ devops_checkout }}/data"
         state: directory
-        owner: "{{ deploy_user }}"
-        group: "{{ deploy_group }}"
+        owner: root
+        group: root
         mode: "0755"
 
     - name: Отказать до загрузки образов, если корень данных не каталог

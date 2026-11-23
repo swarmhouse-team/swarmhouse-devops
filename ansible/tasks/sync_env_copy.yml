@@ -2,8 +2,8 @@
 - name: "Записать {{ sync_file }}"
   ansible.builtin.copy:
     dest: "{{ devops_env_dir }}/{{ sync_file }}"
-    owner: "{{ deploy_user }}"
-    group: "{{ deploy_group }}"
+    owner: root
+    group: root
     mode: "0600"
     content: "{{ sync_text }}"
   no_log: true

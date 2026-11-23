@@ -1,43 +1,12 @@
 ---
-- name: Проверить группу docker
-  ansible.builtin.command: getent group docker
-  register: docker_group
-  changed_when: false
-  failed_when: false
-
-- name: Остановить, если группы docker нет
-  ansible.builtin.fail:
-    msg: >-
-      Группа docker не найдена. Пользователя {{ deploy_user }} в неё не добавляю
-      и группу сам не создаю: её должен создать пакет Docker.
-  when: docker_group.rc != 0
-
-- name: Проверить, есть ли пользователь deploy
-  ansible.builtin.command: getent passwd {{ deploy_user }}
-  register: deploy_passwd
-  changed_when: false
-  failed_when: deploy_passwd.rc not in [0, 2]
-
-- name: Создать пользователя deploy
+- name: Пользователь deploy без дополнительных групп
   ansible.builtin.user:
     name: "{{ deploy_user }}"
-    shell: "{{ deploy_shell }}"
+    shell: /bin/bash
     create_home: true
     password_lock: true
-    groups: docker
-    append: true
-  when: deploy_passwd.rc == 2
-
-- name: Добавить существующего deploy в группу docker
-  ansible.builtin.user:
-    name: "{{ deploy_user }}"
-    groups: docker
-    append: true
-  when: deploy_passwd.rc == 0
-
-- name: Запомнить, создан ли пользователь
-  ansible.builtin.set_fact:
-    deploy_user_created: "{{ deploy_passwd.rc == 2 }}"
+    groups: ""
+    append: false
 
 - name: Каталог SSH пользователя deploy
   ansible.builtin.file:
