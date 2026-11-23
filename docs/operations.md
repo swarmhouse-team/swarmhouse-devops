@@ -41,7 +41,7 @@
 
 `POSTGRES_INITDB_ARGS` применяется только при первой инициализации пустого каталога данных.
 
-`postgres-exporter` читает `DATA_SOURCE_URI` из `env/postgres-exporter.env`. В примере это `postgres:5432/app?sslmode=disable`, то же имя, что `POSTGRES_DB` в `env/postgres.env.example`. Роль и пароль — `DATA_SOURCE_USER` и `DATA_SOURCE_PASS`. Playbook при `deploy_services=true` создаёт отсутствующую роль и выдаёт `pg_monitor` и `CONNECT`. Существующий пароль роли не меняется.
+`postgres-exporter` подключается к служебной базе `postgres` (`DATA_SOURCE_URI=postgres:5432/postgres?sslmode=disable`). Метрики `pg_stat_database` и `pg_stat_activity` кластерные, имя рабочей базы экспортёру не нужно. Имя рабочей базы задаётся только в `env/postgres.env` (`POSTGRES_DB`). Роль и пароль — `DATA_SOURCE_USER` и `DATA_SOURCE_PASS`. Playbook при `deploy_services=true` создаёт отсутствующую роль и выдаёт `pg_monitor` и `CONNECT` на базу `postgres`. Рабочую базу playbook не создаёт. Существующий пароль роли не меняется.
 
 `redis-exporter` ходит на `redis://redis:6379` и берёт пароль из `env/redis-exporter.env`. Этот пароль должен совпадать с `REDIS_PASSWORD` контейнера `redis`. Репозиторий совпадение не проверяет.
 

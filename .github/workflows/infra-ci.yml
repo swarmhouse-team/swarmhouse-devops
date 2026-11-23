@@ -80,3 +80,19 @@ jobs:
 
       - name: Check image availability
         run: docker compose --env-file .env -f docker-compose.yml pull
+
+      - name: Smoke test postgres-exporter
+        run: |
+          set -euo pipefail
+          docker network create infra || true
+          docker network create monitoring || true
+          sudo chown 999:999 data/postgres
+          docker compose -f docker-compose.yml up -d --wait postgres
+          # роль экспортёра создаётся так же, как в Ansible
+          docker exec -i postgres sh -ec 'psql -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=1 -c "CREATE ROLE postgres_exporter LOGIN PASSWORD '\''change_me_strong_password'\''; GRANT pg_monitor TO postgres_exporter;"'
+          docker compose -f docker-compose.monitoring.yml up -d postgres-exporter
+          for i in $(seq 1 20); do
+            docker run --rm --network monitoring curlimages/curl -fsS http://postgres-exporter:9187/metrics | grep -qx 'pg_up 1' && exit 0
+            sleep 3
+          done
+          echo "pg_up != 1"; exit 1

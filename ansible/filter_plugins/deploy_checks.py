@@ -3,7 +3,6 @@
 import re
 
 IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-URI = re.compile(r"^postgres:5432/([A-Za-z_][A-Za-z0-9_]*)\?sslmode=disable$")
 RESTORE_DB = re.compile(r"^restore_test_[a-z0-9_]+$")
 PLACEHOLDERS = {
     "ci-placeholder-not-for-production",
@@ -20,7 +19,6 @@ WEAK_PASSWORDS = {
     "change_me_strong_password",
 }
 SYNC_KEYS = {
-    "DATA_SOURCE_URI",
     "GF_AUTH_BASIC_ENABLED",
     "GF_SECURITY_COOKIE_SECURE",
     "GF_AUTH_ANONYMOUS_ENABLED",
@@ -29,25 +27,6 @@ SYNC_KEYS = {
 
 def is_ident(value):
     return bool(IDENT.match(str(value or "")))
-
-
-def datasource_uri(db_name):
-    if not is_ident(db_name):
-        raise ValueError("bad db name")
-    return "postgres:5432/%s?sslmode=disable" % db_name
-
-
-def db_name_from_uri(uri):
-    match = URI.match(str(uri or ""))
-    return match.group(1) if match else ""
-
-
-def exporter_db_problem(postgres_db, uri):
-    if not is_ident(postgres_db):
-        return "postgres_db_invalid"
-    if str(uri or "") != datasource_uri(postgres_db):
-        return "datasource_uri_mismatch"
-    return ""
 
 
 JIRA_KEYS = ("JIRA_USER", "JIRA_API_TOKEN")
@@ -168,15 +147,6 @@ def grafana_sync_updates(blockers):
     return updates
 
 
-def sync_updates(postgres_db):
-    return {
-        "DATA_SOURCE_URI": datasource_uri(postgres_db),
-        "GF_AUTH_BASIC_ENABLED": "true",
-        "GF_SECURITY_COOKIE_SECURE": "false",
-        "GF_AUTH_ANONYMOUS_ENABLED": "false",
-    }
-
-
 def sync_env(text, updates):
     updates = dict(updates or {})
     refused = sorted(set(updates) - SYNC_KEYS)
@@ -277,9 +247,6 @@ class FilterModule:
     def filters(self):
         return {
             "is_ident": is_ident,
-            "datasource_uri": datasource_uri,
-            "db_name_from_uri": db_name_from_uri,
-            "exporter_db_problem": exporter_db_problem,
             "jira_problems": jira_problems,
             "jira_missing": jira_missing,
             "jira_value_ok": jira_value_ok,
@@ -288,7 +255,6 @@ class FilterModule:
             "apply_jira_lines": apply_jira_lines,
             "grafana_blockers": grafana_blockers,
             "grafana_sync_updates": grafana_sync_updates,
-            "sync_updates": sync_updates,
             "sync_env": sync_env,
             "backup_dir_from_log": backup_dir_from_log,
             "public_failure_text": public_failure_text,

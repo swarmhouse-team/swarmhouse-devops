@@ -7,9 +7,6 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "filter_plu
 
 from deploy_checks import (  # noqa: E402
     backup_dir_from_log,
-    datasource_uri,
-    db_name_from_uri,
-    exporter_db_problem,
     grafana_blockers,
     grafana_sync_updates,
     jira_problems,
@@ -17,20 +14,11 @@ from deploy_checks import (  # noqa: E402
     restore_db_from_log,
     service_ready,
     sync_env,
-    sync_updates,
 )
 from env_parse import parse_env  # noqa: E402
 
 
 def main():
-    assert datasource_uri("app") == "postgres:5432/app?sslmode=disable"
-    assert db_name_from_uri(datasource_uri("app")) == "app"
-    assert exporter_db_problem("app", datasource_uri("app")) == ""
-    assert exporter_db_problem("app", "postgres:5432/swarmhouse_db?sslmode=disable") == (
-        "datasource_uri_mismatch"
-    )
-    assert exporter_db_problem("app", "") == "datasource_uri_mismatch"
-
     assert jira_problems({}) == ["JIRA_USER", "JIRA_API_TOKEN"]
     assert jira_problems({"JIRA_API_TOKEN": "api-token", "JIRA_USER": "email-jira"}) == [
         "JIRA_USER",
@@ -85,14 +73,18 @@ def main():
 
     original = "\n".join(
         [
-            "DATA_SOURCE_USER=postgres_exporter",
-            "DATA_SOURCE_PASS=keep-this-secret",
+            "GF_SECURITY_ADMIN_USER=admin",
+            "GF_SECURITY_ADMIN_PASSWORD=keep-this-secret",
             "GF_AUTH_BASIC_ENABLED=false",
+            "GF_AUTH_ANONYMOUS_ENABLED=true",
+            "GF_SECURITY_COOKIE_SECURE=true",
         ]
     )
-    updated = sync_env(original, sync_updates("app"))
-    assert "DATA_SOURCE_PASS=keep-this-secret" in updated
-    assert "DATA_SOURCE_URI=postgres:5432/app?sslmode=disable" in updated
+    updated = sync_env(
+        original,
+        grafana_sync_updates(["basic_disabled", "anonymous_enabled", "cookie_secure_on_http"]),
+    )
+    assert "GF_SECURITY_ADMIN_PASSWORD=keep-this-secret" in updated
     assert "GF_AUTH_BASIC_ENABLED=true" in updated
     assert "GF_SECURITY_COOKIE_SECURE=false" in updated
     assert "GF_AUTH_ANONYMOUS_ENABLED=false" in updated
@@ -132,24 +124,6 @@ def main():
     assert "service_ready" in task
     assert "_task.result.stdout" in task
     assert "stdout is match" not in task
-    exporter_local = "\n".join(
-        [
-            "DATA_SOURCE_USER=postgres_exporter",
-            "DATA_SOURCE_PASS=keep-this-secret",
-            "DATA_SOURCE_URI=postgres:5432/other?sslmode=disable",
-        ]
-    ) + "\n"
-    exporter_server = sync_env(exporter_local, {"DATA_SOURCE_URI": datasource_uri("app")})
-    assert "DATA_SOURCE_PASS=keep-this-secret" in exporter_server
-    assert "DATA_SOURCE_URI=postgres:5432/app?sslmode=disable" in exporter_server
-    assert "GF_SECURITY" not in exporter_server
-    try:
-        sync_env(exporter_local, {"DATA_SOURCE_PASS": "other"})
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("password sync was accepted")
-
     grafana_local = "\n".join(
         [
             "GF_SECURITY_ADMIN_USER=admin",
@@ -166,16 +140,14 @@ def main():
     assert "GF_SECURITY_ADMIN_PASSWORD=keep-this-secret" in grafana_server
     assert "GF_SECURITY_COOKIE_SECURE=false" in grafana_server
     assert "DATA_SOURCE_URI" not in grafana_server
-    assert grafana_server != exporter_server
     assert restore_db_from_log("Восстановление завершено. Тестовая база: restore_test_20260101_000000") == (
         "restore_test_20260101_000000"
     )
-    assert restore_db_from_log("Тестовая база: app") == ""
+    assert restore_db_from_log("Тестовая база: otherdb") == ""
 
-    print("exporter uri", exporter_db_problem("app", datasource_uri("app")))
     print("jira missing", ",".join(jira_problems({})))
     print("grafana blockers", ",".join(blocked))
-    print("password preserved", "DATA_SOURCE_PASS=keep-this-secret" in updated)
+    print("password preserved", "GF_SECURITY_ADMIN_PASSWORD=keep-this-secret" in updated)
     print("ok")
 
 

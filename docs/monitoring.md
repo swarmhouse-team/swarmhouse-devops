@@ -40,7 +40,7 @@ Grafana получает datasource provisioning из `conf/grafana/provisioning
 Экспортёры:
 
 - `node-exporter` смотрит procfs и sysfs хоста. Точки монтирования `/dev`, `/proc`, `/sys`, данные Docker и containerd из сборщика filesystem исключены флагом в Compose.
-- `postgres-exporter` подключается по `DATA_SOURCE_URI`. Пример указывает базу `app`, как `POSTGRES_DB`. Роль задаётся `DATA_SOURCE_USER` / `DATA_SOURCE_PASS`. При `deploy_services=true` отсутствующая роль создаётся с `pg_monitor` и `CONNECT`.
+- `postgres-exporter` подключается к служебной базе `postgres` (`DATA_SOURCE_URI=postgres:5432/postgres?sslmode=disable`). Метрики `pg_stat_database` и `pg_stat_activity` кластерные, имя рабочей базы экспортёру не нужно. Имя рабочей базы задаётся только в `env/postgres.env` (`POSTGRES_DB`). Роль задаётся `DATA_SOURCE_USER` / `DATA_SOURCE_PASS`. При `deploy_services=true` отсутствующая роль создаётся с `pg_monitor` и `CONNECT` на базу `postgres`.
 - `redis-exporter` подключается к `redis://redis:6379`.
 - cAdvisor запущен с `--docker_only=true`, `--housekeeping_interval=15s`, `--enable_load_reader=true`. Метрика `container_cpu_load_average_10s` без load reader в этом образе не появляется; флаг как раз для неё. В самом дашборде Docker Metrics панель `container_tasks_state` помечена как неработающая со ссылкой на ограничение cAdvisor. Отдельной проверки, что load reader на сервере отдаёт серии, в репозитории нет.
 

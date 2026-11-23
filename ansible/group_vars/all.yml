@@ -54,16 +54,17 @@ env_placeholders:
   - email-jira
   - root_url
 
-# Несекретные значения из env/*.example. Пароли сюда не входят.
-postgres_identity:
-  POSTGRES_DB: app
-  POSTGRES_USER: app_admin
-  POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+# Несекретные значения из env/postgres.env.example. Пароли сюда не входят.
+# Пример — единственный источник имени базы, пользователя и аргументов initdb.
+postgres_example: "{{ playbook_dir }}/../env/postgres.env.example"
+postgres_db: "{{ lookup('ansible.builtin.ini', 'POSTGRES_DB', type='properties', file=postgres_example) }}"
+postgres_user: "{{ lookup('ansible.builtin.ini', 'POSTGRES_USER', type='properties', file=postgres_example) }}"
+postgres_initdb_args: "{{ lookup('ansible.builtin.ini', 'POSTGRES_INITDB_ARGS', type='properties', file=postgres_example) }}"
 postgres_exporter_user: postgres_exporter
 grafana_admin_user: admin
 grafana_bind_port: 3000
 
-# true дописывает в существующие env только DATA_SOURCE_URI и параметры входа Grafana.
+# true дописывает в существующий grafana.env только параметры входа Grafana.
 # Пароли, JIRA_API_TOKEN и JIRA_USER эта синхронизация не записывает.
 allow_env_sync: false
 

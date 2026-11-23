@@ -86,11 +86,6 @@
       ansible.builtin.set_fact:
         deploy_jira_problems: "{{ deploy_grafana_env | jira_problems }}"
         deploy_grafana_blockers: "{{ deploy_grafana_env | grafana_blockers }}"
-        deploy_exporter_problem: >-
-          {{
-            deploy_postgres_env.POSTGRES_DB | default('')
-            | exporter_db_problem(deploy_exporter_env.DATA_SOURCE_URI | default(''))
-          }}
 
     - name: Остановить, если пароль Grafana пустой или стандартный
       ansible.builtin.fail:
@@ -107,40 +102,17 @@
       when: >-
         deploy_jira_problems | reject('in', deploy_grafana_env | jira_missing) | list | length > 0
 
-    - name: Остановить, если вход Grafana или база exporter не согласованы
+    - name: Остановить, если вход Grafana не согласован
       ansible.builtin.fail:
         msg: >-
           Запуск остановлен до изменения контейнеров:
-          Grafana {{ deploy_grafana_blockers | reject('equalto', 'admin_password_rejected') | list | join(', ') }};
-          exporter {{ deploy_exporter_problem }}.
-          Ожидаемая база — POSTGRES_DB из postgres.env.
+          Grafana {{ deploy_grafana_blockers | reject('equalto', 'admin_password_rejected') | list | join(', ') }}.
           Пароли не меняю. Повторите с -e allow_env_sync=true,
-          чтобы записать только DATA_SOURCE_URI, GF_AUTH_BASIC_ENABLED=true,
+          чтобы записать только GF_AUTH_BASIC_ENABLED=true,
           GF_SECURITY_COOKIE_SECURE=false и GF_AUTH_ANONYMOUS_ENABLED=false.
       when:
         - not (allow_env_sync | bool)
-        - >-
-          (deploy_grafana_blockers | reject('equalto', 'admin_password_rejected') | list | length > 0)
-          or deploy_exporter_problem | length > 0
-
-    - name: Собрать текст postgres-exporter.env после разрешённого sync
-      ansible.builtin.set_fact:
-        exporter_synced_text: >-
-          {{
-            (deploy_secret_slurp.results[1].content | b64decode)
-            | sync_env({'DATA_SOURCE_URI': deploy_postgres_env.POSTGRES_DB | datasource_uri})
-          }}
-      no_log: true
-      when:
-        - allow_env_sync | bool
-        - deploy_exporter_problem | length > 0
-
-    - name: Записать postgres-exporter.env и его локальную копию
-      ansible.builtin.include_tasks: tasks/sync_env_copy.yml
-      vars:
-        sync_file: postgres-exporter.env
-        sync_text: "{{ exporter_synced_text | default('') }}"
-      when: exporter_synced_text is defined
+        - deploy_grafana_blockers | reject('equalto', 'admin_password_rejected') | list | length > 0
 
     - name: Собрать текст grafana.env после разрешённого sync
       ansible.builtin.set_fact:
@@ -185,15 +157,11 @@
       ansible.builtin.fail:
         msg: >-
           После allow_env_sync остались блокеры Grafana
-          {{ deploy_grafana_env | grafana_blockers | reject('equalto', 'admin_password_rejected') | list | join(', ') }}
-          и exporter
-          {{ deploy_postgres_env.POSTGRES_DB | default('') | exporter_db_problem(deploy_exporter_env.DATA_SOURCE_URI | default('')) }}.
+          {{ deploy_grafana_env | grafana_blockers | reject('equalto', 'admin_password_rejected') | list | join(', ') }}.
           Контейнеры не меняю.
       when:
         - allow_env_sync | bool
-        - >-
-          (deploy_grafana_env | grafana_blockers | reject('equalto', 'admin_password_rejected') | list | length > 0)
-          or (deploy_postgres_env.POSTGRES_DB | default('') | exporter_db_problem(deploy_exporter_env.DATA_SOURCE_URI | default('')) | length > 0)
+        - deploy_grafana_env | grafana_blockers | reject('equalto', 'admin_password_rejected') | list | length > 0
 
     - name: Запросить недостающие значения Jira
       ansible.builtin.include_tasks: tasks/jira_prompt.yml

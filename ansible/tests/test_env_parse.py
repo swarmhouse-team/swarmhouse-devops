@@ -71,7 +71,9 @@ def main():
     assert "comment" not in parsed
 
     dotenv = "\n".join(["# header", "TZ=Europe/Moscow", "POSTGRES_PORT=5432"])
-    postgres = "\n".join(["POSTGRES_DB=app", "POSTGRES_USER=app_admin", "POSTGRES_PASSWORD=not-a-real-secret"])
+    postgres = "\n".join(
+        ["POSTGRES_DB=swarmhouse_db", "POSTGRES_USER=swarmhouse_admin", "POSTGRES_PASSWORD=not-a-real-secret"]
+    )
     results = [
         slurp_result(".env", dotenv),
         slurp_result("postgres.env", postgres),
