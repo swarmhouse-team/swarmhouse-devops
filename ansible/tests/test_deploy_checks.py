@@ -7,7 +7,6 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "filter_plu
 
 from deploy_checks import (  # noqa: E402
     backup_dir_from_log,
-    jira_problems,
     public_failure_text,
     restore_db_from_log,
     service_ready,
@@ -15,13 +14,6 @@ from deploy_checks import (  # noqa: E402
 
 
 def main():
-    assert jira_problems({}) == ["JIRA_USER", "JIRA_API_TOKEN"]
-    assert jira_problems({"JIRA_API_TOKEN": "api-token", "JIRA_USER": "email-jira"}) == [
-        "JIRA_USER",
-        "JIRA_API_TOKEN",
-    ]
-    assert jira_problems({"JIRA_API_TOKEN": "external-token", "JIRA_USER": "ops@example.com"}) == []
-
     log = "[2026-01-01 00:00:00] Готово: /opt/swarmhouse/swarmhouse-devops/data/backup/2026-01-01_00-00-00 (1K)"
     assert backup_dir_from_log(log).endswith("/data/backup/2026-01-01_00-00-00")
     whiteout = (
@@ -56,7 +48,6 @@ def main():
     )
     assert restore_db_from_log("Тестовая база: otherdb") == ""
 
-    print("jira missing", ",".join(jira_problems({})))
     print("ok")
 
 

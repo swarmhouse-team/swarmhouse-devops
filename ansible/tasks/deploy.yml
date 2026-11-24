@@ -14,39 +14,6 @@
 - name: Подготовить и запустить явный список сервисов
   when: deploy_services | bool
   block:
-    - name: Прочитать .env перед запуском
-      ansible.builtin.slurp:
-        src: "{{ devops_env_dir }}/.env"
-      register: deploy_dotenv_slurp
-      no_log: true
-      diff: false
-
-    - name: Разобрать теги образов
-      ansible.builtin.set_fact:
-        deploy_env: "{{ deploy_dotenv_slurp.content | b64decode | parse_env }}"
-      no_log: true
-
-    - name: Проверить обязательные значения .env
-      ansible.builtin.set_fact:
-        deploy_missing_env: "{{ deploy_missing_env | default([]) + [item] }}"
-      loop:
-        - POSTGRES_TAG
-        - REDIS_TAG
-        - PROMETHEUS_VERSION
-        - GRAFANA_VERSION
-        - NODE_EXPORTER_VERSION
-        - POSTGRES_EXPORTER_VERSION
-        - REDIS_EXPORTER_VERSION
-        - CADVISOR_VERSION
-        - LOKI_VERSION
-        - ALLOY_VERSION
-      when: deploy_env[item] | default('') | length == 0
-
-    - name: Остановить, если в .env нет тегов образов
-      ansible.builtin.fail:
-        msg: "Перед запуском в .env нет значений: {{ deploy_missing_env | join(', ') }}."
-      when: deploy_missing_env | default([]) | length > 0
-
     - name: Проверить файлы, без которых Compose не стартует
       ansible.builtin.stat:
         path: "{{ devops_checkout }}/{{ item }}"
@@ -74,40 +41,7 @@
       loop_control:
         label: "{{ item.item }}"
 
-    - name: Прочитать env перед изменением контейнеров
-      ansible.builtin.slurp:
-        src: "{{ devops_env_dir }}/{{ item }}"
-      loop:
-        - postgres.env
-        - postgres-exporter.env
-        - grafana.env
-      register: deploy_secret_slurp
-      no_log: true
-      diff: false
-
-    - name: Разобрать env перед запуском
-      ansible.builtin.set_fact:
-        deploy_postgres_env: "{{ (deploy_secret_slurp.results[0].content | b64decode | parse_env) }}"
-        deploy_exporter_env: "{{ (deploy_secret_slurp.results[1].content | b64decode | parse_env) }}"
-        deploy_grafana_env: "{{ (deploy_secret_slurp.results[2].content | b64decode | parse_env) }}"
-      no_log: true
-
-    - name: Собрать заглушки Jira без значений секретов
-      ansible.builtin.set_fact:
-        deploy_jira_problems: "{{ deploy_grafana_env | jira_problems }}"
-
-    - name: Остановить, если в grafana.env осталась заглушка Jira
-      ansible.builtin.fail:
-        msg: >-
-          В grafana.env непустое значение {{ deploy_jira_problems | join(', ') }} является заглушкой.
-          Его не заменяю и не показываю. Контейнеры не меняю.
-      when: >-
-        deploy_jira_problems | reject('in', deploy_grafana_env | jira_missing) | list | length > 0
-
-    - name: Запросить недостающие значения Jira
-      ansible.builtin.include_tasks: tasks/jira_prompt.yml
-
-    - name: Проверить конфигурацию Compose
+    - name: Прочитать конфигурацию проектов Compose в JSON
       ansible.builtin.command:
         argv:
           - docker
@@ -119,11 +53,28 @@
           - -f
           - "{{ devops_checkout }}/{{ item.file }}"
           - config
-          - --quiet
+          - --format
+          - json
       loop: "{{ deploy_compose }}"
-      loop_control:
-        label: "{{ item.project_name }}"
+      register: deploy_compose_config
       changed_when: false
+      no_log: true
+
+    - name: Получить образы, порт Prometheus и параметры роли из Compose
+      ansible.builtin.set_fact:
+        deploy_images: "{{ dict(resolved_services.keys() | zip(resolved_services.values() | map(attribute='image'))) }}"
+        deploy_prometheus_port: "{{ resolved_services.prometheus.ports[0].published }}"
+        deploy_postgres_env:
+          POSTGRES_USER: "{{ resolved_services.postgres.environment.POSTGRES_USER }}"
+        deploy_exporter_env:
+          DATA_SOURCE_USER: "{{ resolved_services['postgres-exporter'].environment.DATA_SOURCE_USER }}"
+          # Compose экранирует доллары при сериализации конфигурации.
+          DATA_SOURCE_PASS: "{{ resolved_services['postgres-exporter'].environment.DATA_SOURCE_PASS | replace('$$', '$') }}"
+      vars:
+        resolved_services: >-
+          {{ (deploy_compose_config.results[0].stdout | from_json).services
+             | combine((deploy_compose_config.results[1].stdout | from_json).services) }}
+      no_log: true
 
     - name: Посчитать хеш конфигурации сервисов
       ansible.builtin.command:
@@ -191,7 +142,7 @@
         service_label: "{{ fields[4] | default('') }}"
         image: "{{ fields[5] | default('') }}"
         config_hash: "{{ fields[6] | default('') }}"
-        expected_image: "{{ {'postgres': 'postgres:' ~ deploy_env.POSTGRES_TAG, 'redis': 'redis:' ~ deploy_env.REDIS_TAG, 'prometheus': 'prom/prometheus:' ~ deploy_env.PROMETHEUS_VERSION, 'grafana': 'grafana/grafana:' ~ deploy_env.GRAFANA_VERSION, 'node-exporter': 'prom/node-exporter:' ~ deploy_env.NODE_EXPORTER_VERSION, 'postgres-exporter': 'quay.io/prometheuscommunity/postgres-exporter:' ~ deploy_env.POSTGRES_EXPORTER_VERSION, 'redis-exporter': 'oliver006/redis_exporter:' ~ deploy_env.REDIS_EXPORTER_VERSION, 'cadvisor': 'ghcr.io/google/cadvisor:' ~ deploy_env.CADVISOR_VERSION, 'loki': 'grafana/loki:' ~ deploy_env.LOKI_VERSION, 'alloy': 'grafana/alloy:' ~ deploy_env.ALLOY_VERSION, 'alloy-init': 'grafana/alloy:' ~ deploy_env.ALLOY_VERSION}[item.item.service] }}"
+        expected_image: "{{ deploy_images[item.item.service] }}"
         expected_hash: "{{ deploy_hash_map[item.item.service] | default('') }}"
         image_ok: "{{ image in [expected_image, 'docker.io/' ~ expected_image, 'docker.io/library/' ~ expected_image] }}"
         labels_ok: >-
@@ -289,18 +240,18 @@
       ansible.builtin.include_tasks: tasks/service_datadir.yml
       loop:
         - name: redis
-          image: "redis:{{ deploy_env.REDIS_TAG }}"
-          tag: "{{ deploy_env.REDIS_TAG }}"
+          image: "{{ deploy_images.redis }}"
+          tag: "{{ deploy_images.redis.split(':')[-1] }}"
           host: data/redis
           mount: /data
         - name: prometheus
-          image: "prom/prometheus:{{ deploy_env.PROMETHEUS_VERSION }}"
-          tag: "{{ deploy_env.PROMETHEUS_VERSION }}"
+          image: "{{ deploy_images.prometheus }}"
+          tag: "{{ deploy_images.prometheus.split(':')[-1] }}"
           host: data/prometheus
           mount: /prometheus
         - name: grafana
-          image: "grafana/grafana:{{ deploy_env.GRAFANA_VERSION }}"
-          tag: "{{ deploy_env.GRAFANA_VERSION }}"
+          image: "{{ deploy_images.grafana }}"
+          tag: "{{ deploy_images.grafana.split(':')[-1] }}"
           host: data/grafana
           mount: /var/lib/grafana
       loop_control:

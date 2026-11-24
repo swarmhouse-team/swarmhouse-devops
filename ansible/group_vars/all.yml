@@ -28,13 +28,6 @@ supported_os:
     - "12"
     - "13"
 
-env_placeholders:
-  - ci-placeholder-not-for-production
-  - change_me_strong_password
-  - api-token
-  - email-jira
-  - root_url
-
 # Несекретные значения из env/postgres.env.example. Пароли сюда не входят.
 # Пример — единственный источник имени базы, пользователя и аргументов initdb.
 postgres_example: "{{ playbook_dir }}/../env/postgres.env.example"

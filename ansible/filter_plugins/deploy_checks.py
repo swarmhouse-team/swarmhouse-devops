@@ -4,84 +4,10 @@ import re
 
 IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 RESTORE_DB = re.compile(r"^restore_test_[a-z0-9_]+$")
-PLACEHOLDERS = {
-    "ci-placeholder-not-for-production",
-    "change_me_strong_password",
-    "api-token",
-    "email-jira",
-    "root_url",
-}
+
+
 def is_ident(value):
     return bool(IDENT.match(str(value or "")))
-
-
-JIRA_KEYS = ("JIRA_USER", "JIRA_API_TOKEN")
-
-
-def jira_problems(env):
-    problems = []
-    for key in JIRA_KEYS:
-        value = str((env or {}).get(key, ""))
-        if value == "" or value in PLACEHOLDERS:
-            problems.append(key)
-    return problems
-
-
-def jira_missing(env):
-    """Только отсутствующие и пустые ключи. Непустое значение не запрашивается."""
-    missing = []
-    env = env or {}
-    for key in JIRA_KEYS:
-        if str(env.get(key, "")).strip() == "":
-            missing.append(key)
-    return missing
-
-
-def _env_value_safe(value):
-    """Значение, которое parse_env и env_file Compose сохраняют без shell-экранирования."""
-    text = "" if value is None else str(value)
-    if text == "" or text != text.strip():
-        return False
-    if any(char in text for char in "\n\r\x00#'\"\\$ "):
-        return False
-    return True
-
-
-def jira_answers_ready(missing, answers):
-    missing = list(missing or [])
-    answers = dict(answers or {})
-    if set(answers) != set(missing) or set(answers) - set(JIRA_KEYS):
-        return False
-    return all(_env_value_safe(answers[key]) for key in missing)
-
-
-def apply_jira_lines(text, updates):
-    updates = dict(updates or {})
-    if set(updates) - set(JIRA_KEYS):
-        raise ValueError("refusing keys")
-    for value in updates.values():
-        if not _env_value_safe(value):
-            raise ValueError("unsafe value")
-    lines = str(text or "").splitlines()
-    seen = set()
-    output = []
-    for line in lines:
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or "=" not in stripped:
-            output.append(line)
-            continue
-        key = stripped.split("=", 1)[0].strip()
-        if key in updates:
-            output.append("%s=%s" % (key, updates[key]))
-            seen.add(key)
-        else:
-            output.append(line)
-    for key in JIRA_KEYS:
-        if key in updates and key not in seen:
-            output.append("%s=%s" % (key, updates[key]))
-    if not output:
-        return ""
-    return "\n".join(output) + "\n"
 
 
 def backup_dir_from_log(text):
@@ -159,10 +85,6 @@ class FilterModule:
     def filters(self):
         return {
             "is_ident": is_ident,
-            "jira_problems": jira_problems,
-            "jira_missing": jira_missing,
-            "jira_answers_ready": jira_answers_ready,
-            "apply_jira_lines": apply_jira_lines,
             "backup_dir_from_log": backup_dir_from_log,
             "public_failure_text": public_failure_text,
             "service_ready": service_ready,

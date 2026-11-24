@@ -4,6 +4,15 @@
   hosts: all
   become: true
   gather_facts: true
+  vars_prompt:
+    - name: jira_user
+      prompt: JIRA_USER (можно оставить пустым)
+      private: true
+      default: ""
+    - name: jira_api_token
+      prompt: JIRA_API_TOKEN (можно оставить пустым)
+      private: true
+      default: ""
   tasks:
     - name: Предварительные проверки
       ansible.builtin.import_tasks: tasks/preflight.yml
@@ -23,9 +32,6 @@
     - name: Ключ GitHub Actions
       ansible.builtin.import_tasks: tasks/actions_key.yml
 
-    - name: Уже существующие контейнеры и данные
-      ansible.builtin.import_tasks: tasks/state.yml
-
     - name: Checkout swarmhouse-devops
       ansible.builtin.import_tasks: tasks/checkout.yml
 
@@ -34,9 +40,6 @@
 
     - name: Env и секреты
       ansible.builtin.import_tasks: tasks/env.yml
-
-    - name: Локальные копии env
-      ansible.builtin.import_tasks: tasks/fetch.yml
 
     - name: Запуск сервисов
       ansible.builtin.import_tasks: tasks/deploy.yml

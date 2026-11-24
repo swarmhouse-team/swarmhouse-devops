@@ -18,7 +18,7 @@
             for row in body.get("data", {}).get("result", [])
         ]
         print("1" if "1" in values else "0")
-      - "{{ deploy_env.PROMETHEUS_PORT }}"
+      - "{{ deploy_prometheus_port }}"
   register: pg_up
   changed_when: false
   retries: "{{ (deploy_wait_timeout | int / 5) | round(0, 'ceil') | int }}"
@@ -28,7 +28,7 @@
 - name: Остановить, если exporter не читает PostgreSQL
   ansible.builtin.fail:
     msg: >-
-      Prometheus на 127.0.0.1:{{ deploy_env.PROMETHEUS_PORT }} не вернул pg_up=1.
+      Prometheus на 127.0.0.1:{{ deploy_prometheus_port }} не вернул pg_up=1.
       Наличия контейнера postgres-exporter недостаточно.
       Volumes не удалялись.
   when: pg_up.stdout != '1'

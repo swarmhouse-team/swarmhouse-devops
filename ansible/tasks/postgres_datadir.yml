@@ -2,7 +2,7 @@
 - name: Проверить тег образа PostgreSQL
   ansible.builtin.assert:
     that:
-      - deploy_env.POSTGRES_TAG | image_tag_ok
+      - deploy_images.postgres.split(':')[-1] | image_tag_ok
     fail_msg: >-
       POSTGRES_TAG нельзя использовать как тег образа.
       data/postgres не меняю.
@@ -10,7 +10,7 @@
 
 - name: Зафиксировать образ PostgreSQL
   ansible.builtin.set_fact:
-    postgres_image: "postgres:{{ deploy_env.POSTGRES_TAG }}"
+    postgres_image: "{{ deploy_images.postgres }}"
 
 - name: Проверить, есть ли образ PostgreSQL локально
   ansible.builtin.command:

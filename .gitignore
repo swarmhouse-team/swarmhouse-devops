@@ -13,6 +13,7 @@
 !*.env.example
 !*.env.sample
 !*.env.template
+!/ansible/templates/*.env.j2
 
 .envrc
 .pypirc

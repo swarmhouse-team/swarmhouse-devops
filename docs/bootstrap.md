@@ -13,7 +13,7 @@ Ansible запускается с Linux. На Windows это WSL. Отдельн
 
 Другие версии playbook останавливает. Полный upgrade ОС и перезагрузка не выполняются.
 
-Если `docker --version` и `docker compose version` уже работают, пакеты Docker не переустанавливаются и источник apt не меняется. Если Docker есть, а Compose plugin нет, playbook останавливается.
+Если в образе VPS уже есть Docker, удалите его до запуска bootstrap.
 
 Пользователь `deploy` создаётся без пароля и без группы `docker`. Доступ к сокету Docker равен root, поэтому группы `docker` у него нет. `sudo` без пароля разрешён только для `/usr/local/sbin/swarmhouse-infra-deploy`. Других команд sudo нет.
 
@@ -112,7 +112,7 @@ ansible-playbook bootstrap.yml --ask-become-pass
 ansible-playbook -i inventory.test.yml bootstrap.yml --ask-become-pass
 ```
 
-При `deploy_services=true` и одном хосте `pause` спрашивает только пустые `JIRA_USER` и `JIRA_API_TOKEN` в терминале процесса `ansible-playbook`. Токен не отображается. Уже заполненные значения не меняются, prompt для них не запускается. Если stdin этого процесса не интерактивен, `pause` сразу возвращает пустой ввод и не ждёт; следующая проверка отвергает его, файлы не меняются. Для нескольких хостов запрос не задаётся и `pause` не запускается. В обоих случаях значения должны уже быть в `grafana.env`. Затем:
+При запуске bootstrap Ansible запрашивает `JIRA_USER` и `JIRA_API_TOKEN` без отображения ввода. Оба поля можно оставить пустыми. Значения записываются только при создании нового `grafana.env`. Запуск сервисов включается отдельно:
 
 ```bash
 ansible-playbook -i inventory.test.yml bootstrap.yml --ask-become-pass -e deploy_services=true
@@ -154,11 +154,9 @@ docker compose -f docker-compose.monitoring.yml up -d
 - `infrastructure_server` из `docker-compose.yml`: `postgres`, `redis`. Ожидание healthcheck, таймаут `deploy_wait_timeout` (120 секунд).
 - `monitoring` из `docker-compose.monitoring.yml`: `alloy-init`, `prometheus`, `grafana`, `loki`, `alloy`, `cadvisor`, `node-exporter`, `postgres-exporter`, `redis-exporter`. Profiles в этих файлах нет. `alloy-init` считается готовым при `exited 0`, остальные — когда контейнер `running`.
 
-Перед изменением контейнеров playbook проверяет обязательные параметры и печатает план. Контакт `swarmhouse-jira` обязателен, отдельного выключателя Jira нет. Пустые `JIRA_USER` и `JIRA_API_TOKEN` запрашиваются в терминале одного хоста. Пустой ввод и заглушки example останавливают playbook до записи файла и до Docker. Уже заданные непустые значения не заменяются.
+Перед изменением контейнеров playbook проверяет конфигурацию Compose и печатает план. При пустых реквизитах Jira уведомления в Jira работать не будут.
 
-Существующий `grafana.env` playbook не переписывает. Пароли, Jira и `DATA_SOURCE_URI` из уже лежащего файла не меняются.
-
-Если процесс оборвался после серверной записи и локальная копия осталась старой, повторный bootstrap останавливается на несовпадении checksum. Сверьте оба файла локально, не публикуя секреты. Затем сами выберите версию, которую оставляете, приведите к ней только этот файл и сохраните режим `0600`. После этого повторите bootstrap. Ошибка модуля записи локальной копии останавливает тот же запуск: серверный файл мог обновиться, локальный — нет, содержимое не выводится, серверная запись не откатывается.
+Чтобы добавить или заменить реквизиты Jira на работающем VPS, откройте `sudoedit /opt/swarmhouse/secrets/env/grafana.env`, измените строки `JIRA_USER` и `JIRA_API_TOKEN`, затем из checkout выполните `sudo docker compose -f docker-compose.monitoring.yml up -d --force-recreate grafana`.
 
 Затем playbook ждёт healthcheck `postgres` и `redis` и создаёт отсутствующую роль из `DATA_SOURCE_USER`. Роли выдаются `pg_monitor` и `CONNECT` на служебную базу `postgres`. Рабочую базу playbook не создаёт: её создаёт образ PostgreSQL из `POSTGRES_DB` при первой инициализации каталога данных. Существующие роль и пароль не переименовываются и не сбрасываются. Проверка `SELECT 1` идёт в базе `postgres`. После мониторинга запуск успешен только если Prometheus на loopback вернул `pg_up=1`.
 
@@ -197,7 +195,7 @@ mv "$HOME/.swarmhouse/vps/swarmhouse-test" \
 
 Канонический приватный ключ — локальный файл на управляющей машине. Bootstrap ставит его публичную часть в `authorized_keys` и не кладёт приватный ключ на VPS.
 
-Локальные копии env лежат в `$HOME/.swarmhouse/vps/<имя хоста>/env/`. Повторный bootstrap не перезаписывает ни серверные env, ни эти копии. Расхождение checksum — отказ. Если серверного файла нет, а локальная копия есть, новые пароли не генерируются. Автоматического восстановления env из локальной копии нет: файлы нужно вернуть в `/opt/swarmhouse/secrets/env` своей резервной копией до bootstrap. Совпадение env с данными уже инициализированной БД эта операция не проверяет.
+Файлы в `~/.swarmhouse/vps/<host>/passwords/` используются только при создании нового env. На работающем сервере действующие пароли хранятся в `/opt/swarmhouse/secrets/env/`. Для восстановления берите локальную копию env из `~/.swarmhouse/vps/<host>/env/`. При повторном запуске bootstrap обновляет эту копию с сервера и сохраняет режим `0600`.
 
 ## 6. Что внести в GitHub вручную
 
@@ -213,7 +211,7 @@ Playbook в GitHub ничего не отправляет. Для `.github/workf
 
 `DEPLOY_KNOWN_HOSTS` снимается на управляющей машине отдельно, например `ssh-keyscan -p <порт> <хост>`. Playbook это не делает и вход Actions не проверяет.
 
-Перед `deploy_services=true` пустые `JIRA_API_TOKEN` и `JIRA_USER` можно ввести в терминале одного хоста. Заглушки `api-token` и `email-jira` рабочими не являются. Если они уже лежат в существующем env, playbook останавливается и файл не переписывает. `DEPLOY_KNOWN_HOSTS` снимается с машины, которая уже доверяет ключу хоста, и сверяется с отпечатком в панели провайдера. Команда: `ssh-keyscan -p <порт> <хост>`. В workflow остаётся `StrictHostKeyChecking=yes`.
+`DEPLOY_KNOWN_HOSTS` снимается с машины, которая уже доверяет ключу хоста, и сверяется с отпечатком в панели провайдера. Команда `ssh-keyscan -p <порт> <хост>`. В workflow остаётся `StrictHostKeyChecking=yes`.
 
 GitHub-hosted runner не открывает тестовую VM `127.0.0.1:2222`. CD против `swarmhouse-test` с этого runner не проверяется. Первый bootstrap Actions не требует.
 
@@ -234,9 +232,9 @@ ssh -i "$HOME/.swarmhouse/vps/<имя хоста из inventory>/github-actions/
 
 Повторный запуск не создаёт новую пару Actions, не перезаписывает пароли, env и checkout. После пересоздания VM с тем же `local_vps_dir` на сервер ставится прежняя публичная часть. Существующий checkout не переключается: нет `reset`, `clean` и stash. Если `HEAD` не равен `devops_git_version`, origin другой или в отслеживаемых файлах есть правки, playbook останавливается. Уже запущенные контейнеры с тем же project name и тем же хешем Compose не пересоздаются. При `deploy_services=true` отсутствующие сервисы из явного списка создаются.
 
-Если на VPS уже есть контейнер `postgres`, `redis` или `grafana` либо непустой `data/postgres`, `data/redis`, `data/grafana`, а соответствующего env нет, новые пароли не создаются. Неясное состояние Docker тоже останавливает playbook, а не считается пустым сервером.
+Если `data/postgres` непустой, а `postgres.env` отсутствует, bootstrap останавливается. До повторного запуска восстановите `/opt/swarmhouse/secrets/env/postgres.env` из локальной копии env.
 
-Обрыв посередине не откатывает уже созданные каталоги. Следующий запуск продолжает с того, что уже совпадает с ожидаемым состоянием. Расходящиеся env и ключи он не перезаписывает.
+При обрыве уже созданные каталоги и серверные env сохраняются. Повторный запуск создаёт недостающие файлы и обновляет локальные копии env с VPS.
 
 ## Бэкап PostgreSQL
 
@@ -256,18 +254,14 @@ ssh -i "$HOME/.swarmhouse/vps/<имя хоста из inventory>/github-actions/
 
 Отдельная тестовая VM `swarmhouse-test`, повторный bootstrap: `ok=83`, `changed=0`, `unreachable=0`, `failed=0`, `skipped=131`, `deploy_services=false`. `changed=0` значит, что уже существующие Docker, пользователь `deploy` и checkout менять не пришлось. Checkout был `/opt/swarmhouse/swarmhouse-devops`, отчёт показал версию `swarmhouse-53`. Контейнеров проекта не было. Env лежали в `/opt/swarmhouse/secrets/env`, отчёт указал режим `0600` и владельца `deploy`. Приватный файл Actions на VM ещё оставался. Вход Actions, тестовый бэкап и cron не выполнялись.
 
-Этот прогон не подтверждает чистую установку после последних правок playbook, ветку установки Docker через `deb822_repository` (она выполняется только если клиента Docker ещё нет), запуск и health сервисов, работу Actions и бэкап на этой VM. Пакет `acl` в список базовых пакетов входит. Git-задачи checkout идут от root, отдельного `become_user: deploy` у них нет.
-
-В коде, отдельно от серверной проверки, сейчас есть: выбор `devops_git_version` и остановка при чужом HEAD; чтение env из `content` модуля `slurp`, а не из `rc`; системные факты через `ansible_facts`; установка нового Docker через `deb822_repository`, без смены источника, если Docker уже работает.
+Этот прогон не подтверждает чистую установку после последних правок playbook, запуск сервисов, работу Actions и бэкап на этой VM.
 
 ## Если bootstrap остановился
 
 Короткие случаи, которые уже встречались в этом playbook. Секреты и ключи при разборе не печатать и не перезаписывать.
 
 - Результат цикла лежит во вложенном элементе. У `stat` или `command` с `register` и `loop` поля вроде `stat` и `stdout` читаются как `item.stat` и `item.item`, а не как будто сам элемент — исходный словарь списка. Ошибка вида «dict object has no attribute» на таком поле означает неверный уровень, а не отсутствие файла.
-- `slurp` при успехе отдаёт `content` в base64 и не отдаёт `rc`. Проверять нужно `content is defined`, затем `b64decode`. Подстановка `item.rc | default(1)` помечает удачный `slurp` как провал и затирает разобранный env.
 - Канонический приватный ключ Actions — локальный файл на управляющей машине. Если локальные половины пары не совпадают, playbook останавливается и файлы не перезаписывает. Приватный ключ на VPS не кладётся.
-- Прежняя схема с `become_user: deploy` падала на временном файле с `chmod: invalid mode: A+user:deploy:rx:allow`, если на хосте не было `acl` и `setfacl`. Сейчас checkout и env пишутся от root. Пакет `acl` остаётся в базовом списке. Проверку временных файлов Ansible не отключают и каталоги не открывают на `0777`.
 
 ## 9. Что bootstrap не делает
 
