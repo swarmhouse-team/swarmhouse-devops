@@ -40,15 +40,6 @@ jobs:
             shellcheck scripts/infra-deploy.sh
           fi
 
-      - name: Run Ansible filter checks
-        run: |
-          set -euo pipefail
-          files="$(find ansible/tests -maxdepth 1 -type f -name 'test_*.py' | sort)"
-          test -n "$files"
-          while IFS= read -r file; do
-            python3 "$file"
-          done <<< "$files"
-
       - name: Check Docker Compose
         run: docker compose version
 

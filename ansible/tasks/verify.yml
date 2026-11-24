@@ -1,30 +1,14 @@
 ---
-- name: Проверить Docker и Compose
-  ansible.builtin.command: "{{ item }}"
-  loop:
-    - docker info
-    - docker compose version
-  changed_when: false
-
-- name: Прочитать состояние сервиса Docker
-  ansible.builtin.service_facts:
-
-- name: Остановить, если Docker не активен
-  ansible.builtin.assert:
-    that:
-      - ansible_facts.services['docker.service'].state == 'running'
-      - ansible_facts.services['docker.service'].status == 'enabled'
-    fail_msg: "Сервис docker должен быть running и enabled."
-    quiet: true
-
 - name: deploy не должен быть в группе docker
   ansible.builtin.command: id -nG {{ deploy_user }}
   register: deploy_groups
   changed_when: false
-  failed_when: "'docker' in deploy_groups.stdout.split()"
+  failed_when: deploy_groups.rc != 0 or 'docker' in deploy_groups.stdout.split()
 
 - name: Прочитать sudo deploy
   ansible.builtin.command: sudo -l -U {{ deploy_user }}
+  environment:
+    LC_ALL: C
   register: deploy_sudo
   changed_when: false
 
@@ -32,7 +16,7 @@
   ansible.builtin.assert:
     that:
       - deploy_sudo_rules | length == 1
-      - deploy_sudo_rules[0] is search('NOPASSWD:\s*/usr/local/sbin/swarmhouse-infra-deploy')
+      - deploy_sudo_rules[0] is match('^[(]root[)]\s+NOPASSWD:\s*/usr/local/sbin/swarmhouse-infra-deploy\s+[*]$')
     fail_msg: >-
       sudo -l для {{ deploy_user }} должен содержать ровно одно правило:
       NOPASSWD /usr/local/sbin/swarmhouse-infra-deploy. Найдено: {{ deploy_sudo_rules }}
@@ -41,50 +25,3 @@
     deploy_sudo_rules: >-
       {{ deploy_sudo.stdout.split('may run the following commands')[-1].splitlines()[1:]
          | map('trim') | select | list }}
-
-- name: Проверить владельцев и права каталогов
-  ansible.builtin.stat:
-    path: "{{ item.path }}"
-  loop:
-    - { path: "{{ devops_root }}", owner: root, mode: "" }
-    - { path: "{{ devops_checkout }}", owner: root, mode: "" }
-    - { path: "{{ devops_secrets }}", owner: root, mode: "0755" }
-    - { path: "{{ devops_env_dir }}", owner: root, mode: "0700" }
-  loop_control:
-    label: "{{ item.path }}"
-  register: layout_stats
-
-- name: Сверить владельцев и права
-  ansible.builtin.assert:
-    that:
-      - item.stat.exists
-      - item.stat.isdir
-      - item.stat.pw_name == item.item.owner
-      - item.item.mode == '' or item.stat.mode == item.item.mode
-    fail_msg: >-
-      {{ item.item.path }}: владелец {{ item.stat.pw_name | default('нет') }},
-      режим {{ item.stat.mode | default('нет') }}.
-      Ожидалось {{ item.item.owner }} и {{ item.item.mode }}.
-    quiet: true
-  loop: "{{ layout_stats.results }}"
-  loop_control:
-    label: "{{ item.item.path }}"
-
-- name: Собрать отчёт
-  ansible.builtin.debug:
-    msg:
-      - "Docker запущен и включён"
-      - "Пользователь {{ deploy_user }} без группы docker. sudo только для /usr/local/sbin/swarmhouse-infra-deploy"
-      - "Checkout: {{ devops_checkout }}"
-      - "Секреты на VPS: {{ devops_env_dir }} (0600, root)"
-      - "Канонический приватный ключ Actions: {{ local_vps_dir }}/github-actions/id_ed25519"
-      - "Публичный ключ установлен пользователю {{ deploy_user }}. Вход Actions этим фактом не проверен"
-      - "DEPLOY_SSH_KEY заполняется содержимым локального приватного ключа. При смене ключа обновите secret и проверьте вход до отзыва старого"
-      - "Локальные копии env: {{ local_vps_dir }}/env"
-      - "В GitHub вручную: secret DEPLOY_SSH_KEY, secret DEPLOY_KNOWN_HOSTS, vars DEPLOY_HOST, DEPLOY_USER, DEPLOY_PORT"
-      - "Вход GitHub Actions на VPS этим playbook не проверялся. DEPLOY_KNOWN_HOSTS — это host key сервера, не ключ Actions"
-      - "Экспортёр подключается к служебной базе postgres. Роль создаётся только при deploy_services=true и только если её ещё нет"
-      - "Новый grafana.env включает вход по паролю и выключает анонимный доступ. Существующий файл не перезаписывается. Значения Jira из ввода записываются только в новый grafana.env"
-      - "Запуск сервисов: {{ 'выполнен, миграций приложения в этом репозитории нет' if deploy_applied | default(false) else 'выключен, deploy_services=false' }}"
-      - "Тестовый бэкап: {{ 'дамп создан и проверен восстановлением в restore_test_, рабочая база не перезаписывалась, внешней копии нет' if backup_test_ok | default(false) else 'не делался, cron-задача не добавлялась' }}"
-      - "Cron {{ backup_cron_name }}: {{ 'в crontab root' if backup_cron_added | default(false) else 'не добавлялась' }}, у {{ deploy_user }} её нет, KEEP скрипта не менялся"

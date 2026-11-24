@@ -42,10 +42,20 @@
       ansible.builtin.import_tasks: tasks/env.yml
 
     - name: Запуск сервисов
-      ansible.builtin.import_tasks: tasks/deploy.yml
+      ansible.builtin.import_tasks: tasks/services.yml
 
     - name: Бэкап PostgreSQL
       ansible.builtin.import_tasks: tasks/backup.yml
 
-    - name: Проверки и отчёт
+    - name: Проверить права deploy
       ansible.builtin.import_tasks: tasks/verify.yml
+
+    - name: Показать параметры GitHub и итог бэкапа
+      ansible.builtin.debug:
+        msg:
+          - "DEPLOY_SSH_KEY: содержимое {{ local_vps_dir }}/github-actions/id_ed25519"
+          - "DEPLOY_KNOWN_HOSTS: проверенный ключ хоста SSH"
+          - "DEPLOY_HOST: {{ ansible_host | default(inventory_hostname) }}"
+          - "DEPLOY_USER: {{ deploy_user }}"
+          - "DEPLOY_PORT: {{ ansible_port | default(22) }}"
+          - "Тестовый бэкап, восстановление и cron root: {{ 'готово' if backup_test_ok | default(false) else 'пропущено' }}"

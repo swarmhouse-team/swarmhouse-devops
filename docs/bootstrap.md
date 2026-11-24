@@ -8,8 +8,8 @@ Ansible запускается с Linux. На Windows это WSL. Отдельн
 
 Поддерживаются только версии, для которых Docker публикует apt-репозиторий `stable`:
 
-- Ubuntu 22.04, 24.04, 26.04, 26.10
-- Debian 12, 13
+- Ubuntu 22.04, 24.04
+- Debian 12
 
 Другие версии playbook останавливает. Полный upgrade ОС и перезагрузка не выполняются.
 
@@ -156,15 +156,15 @@ docker compose -f docker-compose.monitoring.yml up -d
 - `infrastructure_server` из `docker-compose.yml`: `postgres`, `redis`. Ожидание healthcheck, таймаут `deploy_wait_timeout` (120 секунд).
 - `monitoring` из `docker-compose.monitoring.yml`: `alloy-init`, `prometheus`, `grafana`, `loki`, `alloy`, `cadvisor`, `node-exporter`, `postgres-exporter`, `redis-exporter`. Profiles в этих файлах нет. `alloy-init` считается готовым при `exited 0`, остальные — когда контейнер `running`.
 
-Перед изменением контейнеров playbook проверяет конфигурацию Compose и печатает план. При пустых реквизитах Jira уведомления в Jira работать не будут.
+При пустых реквизитах Jira уведомления в Jira работать не будут.
 
 Чтобы добавить или заменить реквизиты Jira на работающем VPS, откройте `sudoedit /opt/swarmhouse/secrets/env/grafana.env`, измените строки `JIRA_USER` и `JIRA_API_TOKEN`, затем из checkout выполните `sudo docker compose -f docker-compose.monitoring.yml up -d --force-recreate grafana`.
 
 Затем playbook ждёт healthcheck `postgres` и `redis` и создаёт отсутствующую роль из `DATA_SOURCE_USER`. Роли выдаются `pg_monitor` и `CONNECT` на служебную базу `postgres`. Рабочую базу playbook не создаёт: её создаёт образ PostgreSQL из `POSTGRES_DB` при первой инициализации каталога данных. Существующие роль и пароль не переименовываются и не сбрасываются. Проверка `SELECT 1` идёт в базе `postgres`. После мониторинга запуск успешен только если Prometheus на loopback вернул `pg_up=1`.
 
-Если контейнер с тем же именем уже принадлежит другому project name, другому каталогу или его хеш Compose не совпадает с файлом, запуск останавливается. `compose down`, удаление volumes, `--force-recreate` и обновление уже скачанных образов не выполняются. Отсутствующий локальный образ может быть скачан один раз (`pull: missing`). При ошибке в отчёт попадает `docker compose ps` (имя и статус), без env и логов. Миграций приложения в этом репозитории нет, и playbook их не запускает.
+Ansible запускает оба проекта через `docker_compose_v2` с `pull: missing` и `recreate: never`. Изменения конфигурации существующих контейнеров применяет CD.
 
-Для старта создаются только отсутствующие сети `infra` и `monitoring`. Каталог `data` принадлежит `root`, режим `0755`. Корни `data/postgres`, `data/redis`, `data/prometheus` и `data/grafana` пользователю `deploy` не отдаются. Числовой UID в репозиторий не записан. У PostgreSQL playbook вызывает `id postgres` внутри используемого образа. У Redis, Prometheus и Grafana — `id` от пользователя по умолчанию этого образа. Режим только у корня каталога — `0700`, без рекурсивного `chown`. Пути mount и `PGDATA` не меняются. Повторный запуск не возвращает эти корни пользователю `deploy`. Перед стартом проверяется проход этого пользователя в каталог; для PostgreSQL — ещё и путь до `PGDATA`. На сервере этот шаг пока не подтверждался: последний прогон тестовой VM шёл с `deploy_services=false` и каталоги данных не готовил.
+Ansible создаёт сети `infra` и `monitoring` и каталог `data` с владельцем `root` и режимом `0755`. Для корней каталогов сервисов UID/GID заданы в `data_dirs`, режим `0700`. Владелец содержимого рекурсивно не меняется.
 
 Playbook на боевой VPS запускает человек. Из среды разработки он сам не стартует.
 
@@ -232,7 +232,7 @@ ssh -i "$HOME/.swarmhouse/vps/<имя хоста из inventory>/github-actions/
 
 ## 8. Повторный запуск и обрыв
 
-Повторный запуск не создаёт новую пару Actions, не перезаписывает пароли, env и checkout. После пересоздания VM с тем же `local_vps_dir` на сервер ставится прежняя публичная часть. Существующий checkout не переключается: нет `reset`, `clean` и stash. Если `HEAD` не равен `devops_git_version`, origin другой или в отслеживаемых файлах есть правки, playbook останавливается. Уже запущенные контейнеры с тем же project name и тем же хешем Compose не пересоздаются. При `deploy_services=true` отсутствующие сервисы из явного списка создаются.
+Повторный запуск переиспользует локальную пару Actions. Существующие серверные env и версия checkout сохраняются. При `deploy_services=true` Compose запускает недостающие сервисы.
 
 Если `data/postgres` непустой, а `postgres.env` отсутствует, bootstrap останавливается. До повторного запуска восстановите `/opt/swarmhouse/secrets/env/postgres.env` из локальной копии env.
 
@@ -242,7 +242,7 @@ ssh -i "$HOME/.swarmhouse/vps/<имя хоста из inventory>/github-actions/
 
 Используется `scripts/backup-postgres.sh`. Второй системы бэкапов нет. Скрипт сам берёт `flock` на `scripts/.backup-postgres.lock`, пишет в `data/backup` относительно checkout и оставляет `KEEP=5` каталогов. Playbook скрипт не переписывает.
 
-Пользователь cron — `root` (`backup_user`): скрипт делает `docker exec`. Задача с тем же именем в crontab `deploy` удаляется. Расписание по умолчанию — каждый день в 03:15, переменные `backup_minute`, `backup_hour`, `backup_day`, `backup_month`, `backup_weekday`. Имя задачи постоянное: `swarmhouse-postgres-backup`. Другие строки crontab не удаляются. Если `backup-postgres.sh` уже упомянут в чужом задании, playbook останавливается и второе задание не создаёт.
+Ansible переносит задачу `swarmhouse-postgres-backup` из crontab `deploy` в crontab `root`. Расписание по умолчанию — каждый день в 03:15. Своё задание на тот же скрипт проверьте перед bootstrap, playbook ищет задачу только по имени.
 
 На Ubuntu и Debian ставится пакет `cron`, сервис `cron` включается. После `healthy` у контейнера `postgres` скрипт запускается от `root`. Затем `scripts/restore-postgres-test.sh` восстанавливает этот дамп в новую базу `restore_test_*`, playbook проверяет `current_database()` и удаляет только её. Рабочая база не перезаписывается. Если любой шаг не прошёл, cron-задача не добавляется. Если postgres не запущен и `deploy_services=false`, тестовый бэкап и cron-задача пропускаются. Каталог `data/backup` лежит на том же VPS. Внешней копии репозиторий не создаёт: потеря диска VPS уничтожает и данные, и эти бэкапы. `KEEP=5`.
 

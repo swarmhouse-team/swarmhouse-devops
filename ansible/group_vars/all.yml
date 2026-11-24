@@ -22,11 +22,8 @@ supported_os:
   Ubuntu:
     - "22.04"
     - "24.04"
-    - "26.04"
-    - "26.10"
   Debian:
     - "12"
-    - "13"
 
 # Несекретные значения из env/postgres.env.example. Пароли сюда не входят.
 # Пример — единственный источник имени базы, пользователя и аргументов initdb.
@@ -42,32 +39,14 @@ grafana_bind_port: 3000
 # down, удаление volumes, pull always и force-recreate playbook не делает.
 deploy_services: false
 deploy_wait_timeout: 120
-deploy_compose:
-  - project_name: infrastructure_server
-    file: docker-compose.yml
-    wait: true
-    services:
-      - postgres
-      - redis
-  - project_name: monitoring
-    file: docker-compose.monitoring.yml
-    wait: false
-    services:
-      - alloy-init
-      - prometheus
-      - grafana
-      - loki
-      - alloy
-      - cadvisor
-      - node-exporter
-      - postgres-exporter
-      - redis-exporter
-deploy_networks:
-  - infra
-  - monitoring
+# UID/GID из плана. Локальный Docker Engine был недоступен при проверке образов.
+data_dirs:
+  postgres: { uid: 999, gid: 999 }
+  redis: { uid: 999, gid: 999 }
+  prometheus: { uid: 65534, gid: 65534 }
+  grafana: { uid: 472, gid: 0 }
 
 # cron под root, потому что скрипт делает docker exec.
-backup_user: root
 backup_cron_name: swarmhouse-postgres-backup
 backup_minute: "15"
 backup_hour: "3"

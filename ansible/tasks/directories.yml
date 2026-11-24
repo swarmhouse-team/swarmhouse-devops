@@ -1,81 +1,12 @@
 ---
-- name: Проверить /opt/swarmhouse
-  ansible.builtin.stat:
-    path: "{{ devops_root }}"
-  register: swarmhouse_root
-
-- name: Остановить, если /opt/swarmhouse не каталог
-  ansible.builtin.fail:
-    msg: "{{ devops_root }} существует и это не каталог. Ничего не меняю."
-  when:
-    - swarmhouse_root.stat.exists
-    - not swarmhouse_root.stat.isdir
-
-- name: Остановить при чужом владельце /opt/swarmhouse
-  ansible.builtin.fail:
-    msg: >-
-      {{ devops_root }} принадлежит {{ swarmhouse_root.stat.pw_name }},
-      а не root. Владельца не меняю.
-  when:
-    - swarmhouse_root.stat.exists
-    - swarmhouse_root.stat.pw_name != 'root'
-
-- name: Создать /opt/swarmhouse
+- name: Подготовить каталоги проекта и секретов
   ansible.builtin.file:
-    path: "{{ devops_root }}"
+    path: "{{ item.path }}"
     state: directory
     owner: root
     group: root
-    mode: "0755"
-  when: not swarmhouse_root.stat.exists
-
-- name: Проверить каталоги секретов
-  ansible.builtin.stat:
-    path: "{{ item }}"
-  loop:
-    - "{{ devops_secrets }}"
-    - "{{ devops_env_dir }}"
-  register: secret_dir_stats
-
-- name: Остановить, если каталог секретов принадлежит не root
-  ansible.builtin.fail:
-    msg: >-
-      {{ devops_secrets }} принадлежит {{ secret_dir_stats.results[0].stat.pw_name }}.
-      Нужен root, иначе {{ deploy_user }} сможет удалить каталог секретов.
-      Владельца не меняю.
-  when:
-    - secret_dir_stats.results[0].stat.exists
-    - secret_dir_stats.results[0].stat.pw_name != 'root'
-
-- name: Остановить, если каталог env принадлежит не root
-  ansible.builtin.fail:
-    msg: >-
-      {{ devops_env_dir }} принадлежит {{ secret_dir_stats.results[1].stat.pw_name }},
-      а не root. Рекурсивный chown не делаю.
-  when:
-    - secret_dir_stats.results[1].stat.exists
-    - secret_dir_stats.results[1].stat.pw_name != 'root'
-
-- name: Создать отсутствующие каталоги секретов
-  ansible.builtin.file:
-    path: "{{ item.path }}"
-    state: directory
-    owner: "{{ item.owner }}"
-    group: "{{ item.group }}"
     mode: "{{ item.mode }}"
   loop:
-    - { path: "{{ devops_secrets }}", owner: root, group: root, mode: "0755", exists: "{{ secret_dir_stats.results[0].stat.exists }}" }
-    - { path: "{{ devops_env_dir }}", owner: root, group: root, mode: "0700", exists: "{{ secret_dir_stats.results[1].stat.exists }}" }
-  loop_control:
-    label: "{{ item.path }}"
-  when: not (item.exists | bool)
-
-- name: Выставить права каталогов секретов, не меняя владельца содержимого
-  ansible.builtin.file:
-    path: "{{ item.path }}"
-    mode: "{{ item.mode }}"
-  loop:
+    - { path: "{{ devops_root }}", mode: "0755" }
     - { path: "{{ devops_secrets }}", mode: "0755" }
     - { path: "{{ devops_env_dir }}", mode: "0700" }
-  loop_control:
-    label: "{{ item.path }}"
