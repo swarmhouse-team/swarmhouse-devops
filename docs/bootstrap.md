@@ -106,6 +106,8 @@ ansible-playbook bootstrap.yml --ask-become-pass
 
 По умолчанию `deploy_services=false`: контейнеры не запускаются.
 
+Вопросы про Jira можно пропустить через `-e jira_user= -e jira_api_token=`.
+
 Тестовая VM, из каталога `ansible`. Inventory `inventory.test.yml` в git не входит:
 
 ```bash
