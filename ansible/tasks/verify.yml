@@ -1,0 +1,27 @@
+---
+- name: deploy не должен быть в группе docker
+  ansible.builtin.command: id -nG {{ deploy_user }}
+  register: deploy_groups
+  changed_when: false
+  failed_when: deploy_groups.rc != 0 or 'docker' in deploy_groups.stdout.split()
+
+- name: Прочитать sudo deploy
+  ansible.builtin.command: sudo -l -U {{ deploy_user }}
+  environment:
+    LC_ALL: C
+  register: deploy_sudo
+  changed_when: false
+
+- name: sudo deploy разрешён только для скрипта деплоя
+  ansible.builtin.assert:
+    that:
+      - deploy_sudo_rules | length == 1
+      - deploy_sudo_rules[0] is match('^[(]root[)]\s+NOPASSWD:\s*/usr/local/sbin/swarmhouse-infra-deploy\s+[*]$')
+    fail_msg: >-
+      sudo -l для {{ deploy_user }} должен содержать ровно одно правило:
+      NOPASSWD /usr/local/sbin/swarmhouse-infra-deploy. Найдено: {{ deploy_sudo_rules }}
+    quiet: true
+  vars:
+    deploy_sudo_rules: >-
+      {{ deploy_sudo.stdout.split('may run the following commands')[-1].splitlines()[1:]
+         | map('trim') | select | list }}

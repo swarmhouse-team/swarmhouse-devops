@@ -1,0 +1,127 @@
+---
+- name: Установить cron
+  ansible.builtin.apt:
+    name: cron
+    state: present
+
+- name: Включить сервис cron
+  ansible.builtin.systemd_service:
+    name: cron
+    enabled: true
+    state: started
+
+- name: Убрать cron бэкапа из crontab deploy
+  ansible.builtin.cron:
+    name: "{{ backup_cron_name }}"
+    user: "{{ deploy_user }}"
+    state: absent
+
+- name: Проверить, запущен ли PostgreSQL
+  community.docker.docker_container_info:
+    name: postgres
+  register: postgres_status
+  no_log: true
+
+- name: Проверить бэкап PostgreSQL и настроить cron
+  when: postgres_status.exists and postgres_status.container.State.Running
+  block:
+    - name: Дождаться healthy у PostgreSQL
+      community.docker.docker_container_info:
+        name: postgres
+      register: postgres_health
+      until: (postgres_health.container.State.Health.Status | default('')) == 'healthy'
+      retries: "{{ (deploy_wait_timeout | int / 5) | round(0, 'ceil') | int }}"
+      delay: 5
+      no_log: true
+
+    - name: Создать тестовый бэкап
+      ansible.builtin.command:
+        argv: ["{{ backup_script }}"]
+        chdir: "{{ devops_checkout }}"
+      register: backup_test
+      changed_when: true
+
+    - name: Найти каталог созданного бэкапа
+      ansible.builtin.set_fact:
+        backup_dir: "{{ backup_test.stdout | regex_findall('(?m)Готово: (/[^ ]+) [(]') | first | default('') }}"
+
+    - name: Проверить путь тестового бэкапа
+      ansible.builtin.assert:
+        that: backup_dir | length > 0
+        fail_msg: "Скрипт бэкапа не сообщил каталог дампа."
+
+    - name: Восстановить дамп в новую тестовую базу
+      ansible.builtin.command:
+        argv:
+          - "{{ devops_checkout }}/scripts/restore-postgres-test.sh"
+          - "{{ backup_dir }}"
+        chdir: "{{ devops_checkout }}"
+      register: restore_test
+      changed_when: true
+
+    - name: Прочитать имя восстановленной тестовой базы
+      ansible.builtin.set_fact:
+        restore_db: >-
+          {{ restore_test.stdout
+             | regex_findall('(?m)^Восстановление завершено[.] Тестовая база: (restore_test_[a-z0-9_]{1,50})$')
+             | first | default('') }}
+
+    - name: Проверить имя восстановленной базы
+      ansible.builtin.assert:
+        that: restore_db is match('^restore_test_[a-z0-9_]{1,50}$')
+        fail_msg: "Скрипт восстановления не сообщил имя базы restore_test_*."
+
+    - name: Проверить открытую базу через current_database()
+      community.docker.docker_container_exec:
+        container: postgres
+        argv:
+          - sh
+          - -ec
+          - 'psql -U "$POSTGRES_USER" -d "$1" -Atqc "SELECT current_database()"'
+          - sh
+          - "{{ restore_db }}"
+      register: restore_current
+      changed_when: false
+      failed_when: restore_current.rc | default(1) != 0 or restore_current.stdout != restore_db
+
+    - name: Удалить проверенную тестовую базу
+      community.docker.docker_container_exec:
+        container: postgres
+        argv:
+          - sh
+          - -ec
+          - 'test "$1" != "${POSTGRES_DB:?}" && dropdb -U "$POSTGRES_USER" --maintenance-db=postgres "$1"'
+          - sh
+          - "{{ restore_db }}"
+      register: restore_cleanup
+      failed_when: restore_cleanup.rc | default(1) != 0
+      changed_when: true
+
+    - name: Подготовить лог бэкапа
+      ansible.builtin.file:
+        path: "{{ backup_log }}"
+        state: touch
+        owner: root
+        group: root
+        mode: "0640"
+        modification_time: preserve
+        access_time: preserve
+
+    - name: Настроить cron бэкапа под root
+      ansible.builtin.cron:
+        name: "{{ backup_cron_name }}"
+        user: root
+        minute: "{{ backup_minute }}"
+        hour: "{{ backup_hour }}"
+        day: "{{ backup_day }}"
+        month: "{{ backup_month }}"
+        weekday: "{{ backup_weekday }}"
+        job: >-
+          cd {{ devops_checkout | quote }}
+          && PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          {{ backup_script | quote }} >> {{ backup_log | quote }} 2>&1
+        state: present
+
+    - name: Отметить успешное восстановление и настройку cron
+      ansible.builtin.set_fact:
+        backup_test_ok: true

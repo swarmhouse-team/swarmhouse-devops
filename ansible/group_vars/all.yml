@@ -1,0 +1,59 @@
+---
+deploy_user: deploy
+deploy_shell: /bin/bash
+
+devops_root: /opt/swarmhouse
+devops_checkout: /opt/swarmhouse/swarmhouse-devops
+devops_secrets: /opt/swarmhouse/secrets
+devops_env_dir: /opt/swarmhouse/secrets/env
+devops_actions_comment: github-actions@swarmhouse-devops
+
+# HTTPS-форма origin git@github.com:swarmhouse-team/swarmhouse-devops.git
+devops_repo_url: https://github.com/swarmhouse-team/swarmhouse-devops.git
+# Ветка, которую ждёт .github/workflows/infra-cd.yml.
+# Для тестовой VM переопределяется в inventory.test.yml. Ref должен быть запушен в GitHub.
+devops_git_version: main
+
+local_vps_dir: "{{ lookup('env', 'HOME') }}/.swarmhouse/vps/{{ inventory_hostname }}"
+
+# Версии, для которых Docker публикует apt-репозиторий stable.
+supported_os:
+  Ubuntu:
+    - "22.04"
+    - "24.04"
+    - "26.04"
+    - "26.10"
+  Debian:
+    - "12"
+    - "13"
+
+# Несекретные значения из env/postgres.env.example. Пароли сюда не входят.
+# Пример — единственный источник имени базы, пользователя и аргументов initdb.
+postgres_example: "{{ playbook_dir }}/../env/postgres.env.example"
+postgres_db: "{{ lookup('ansible.builtin.ini', 'POSTGRES_DB', type='properties', file=postgres_example) }}"
+postgres_user: "{{ lookup('ansible.builtin.ini', 'POSTGRES_USER', type='properties', file=postgres_example) }}"
+postgres_initdb_args: "{{ lookup('ansible.builtin.ini', 'POSTGRES_INITDB_ARGS', type='properties', file=postgres_example) }}"
+postgres_exporter_user: postgres_exporter
+grafana_admin_user: admin
+grafana_bind_port: 3000
+
+# Запуск контейнеров только при -e deploy_services=true.
+# down, удаление volumes, pull always и force-recreate playbook не делает.
+deploy_services: false
+deploy_wait_timeout: 120
+# UID/GID из плана. Локальный Docker Engine был недоступен при проверке образов.
+data_dirs:
+  postgres: { uid: 999, gid: 999 }
+  redis: { uid: 999, gid: 999 }
+  prometheus: { uid: 65534, gid: 65534 }
+  grafana: { uid: 472, gid: 0 }
+
+# cron под root, потому что скрипт делает docker exec.
+backup_cron_name: swarmhouse-postgres-backup
+backup_minute: "15"
+backup_hour: "3"
+backup_day: "*"
+backup_month: "*"
+backup_weekday: "*"
+backup_log: /var/log/swarmhouse-postgres-backup.log
+backup_script: "{{ devops_checkout }}/scripts/backup-postgres.sh"

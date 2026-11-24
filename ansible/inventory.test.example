@@ -1,0 +1,15 @@
+---
+# Скопируйте в inventory.test.yml (файл в .gitignore).
+# Имя хоста swarmhouse-test задаёт каталог ~/.swarmhouse/vps/swarmhouse-test.
+# Новый независимый тест — другое имя хоста или свой local_vps_dir.
+# Повторный запуск использует тот же каталог, без метки времени на каждый старт.
+# Пароль sudo сюда не записывается: запрос через --ask-become-pass / -K.
+# Замените devops_git_version на ветку или тег, уже запушенный в GitHub.
+all:
+  hosts:
+    swarmhouse-test:
+      ansible_host: 127.0.0.1
+      ansible_port: 2222
+      ansible_user: admin
+      ansible_ssh_private_key_file: ~/.ssh/admin_virtual_box
+      devops_git_version: "<ветка или тег>"

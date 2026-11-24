@@ -1,0 +1,16 @@
+---
+- name: Подготовить каталог checkout
+  ansible.builtin.file:
+    path: "{{ devops_checkout }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Клонировать swarmhouse-devops
+  ansible.builtin.git:
+    repo: "{{ devops_repo_url }}"
+    dest: "{{ devops_checkout }}"
+    version: "{{ devops_git_version }}"
+    update: false
+    force: false

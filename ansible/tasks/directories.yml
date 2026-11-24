@@ -1,0 +1,12 @@
+---
+- name: Подготовить каталоги проекта и секретов
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ devops_root }}", mode: "0755" }
+    - { path: "{{ devops_secrets }}", mode: "0755" }
+    - { path: "{{ devops_env_dir }}", mode: "0700" }

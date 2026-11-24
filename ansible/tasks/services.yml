@@ -1,0 +1,104 @@
+---
+- name: Подготовить каталоги, сети и сервисы
+  when: deploy_services | bool
+  block:
+    - name: Создать каталог data
+      ansible.builtin.file:
+        path: "{{ devops_checkout }}/data"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Подготовить каталоги данных сервисов
+      ansible.builtin.file:
+        path: "{{ devops_checkout }}/data/{{ item.key }}"
+        state: directory
+        owner: "{{ item.value.uid | string }}"
+        group: "{{ item.value.gid | string }}"
+        mode: "0700"
+      loop: "{{ data_dirs | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+
+    - name: Подготовить сети Docker
+      community.docker.docker_network:
+        name: "{{ item }}"
+        driver: bridge
+        appends: true
+        state: present
+      loop:
+        - infra
+        - monitoring
+
+    - name: Запустить PostgreSQL и Redis
+      community.docker.docker_compose_v2:
+        project_src: "{{ devops_checkout }}"
+        files:
+          - docker-compose.yml
+        state: present
+        pull: missing
+        build: never
+        recreate: never
+        wait: true
+        wait_timeout: "{{ deploy_wait_timeout }}"
+      no_log: true
+
+    - name: Прочитать конфигурацию мониторинга
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - -f
+          - docker-compose.monitoring.yml
+          - config
+          - --format
+          - json
+        chdir: "{{ devops_checkout }}"
+      register: monitoring_config
+      changed_when: false
+      no_log: true
+
+    - name: Подготовить роль PostgreSQL для экспортёра
+      ansible.builtin.include_tasks: postgres_exporter_role.yml
+      vars:
+        exporter_env: "{{ (monitoring_config.stdout | from_json).services['postgres-exporter'].environment }}"
+
+    - name: Запустить мониторинг
+      community.docker.docker_compose_v2:
+        project_src: "{{ devops_checkout }}"
+        files:
+          - docker-compose.monitoring.yml
+        state: present
+        pull: missing
+        build: never
+        recreate: never
+        wait: true
+        wait_timeout: "{{ deploy_wait_timeout }}"
+      no_log: true
+
+    - name: Прочитать состояние alloy-init
+      community.docker.docker_container_info:
+        name: alloy-init
+      register: alloy_init
+
+    - name: Проверить завершение alloy-init
+      ansible.builtin.assert:
+        that:
+          - alloy_init.exists
+          - alloy_init.container.State.Status == 'exited'
+          - alloy_init.container.State.ExitCode == 0
+        fail_msg: "Контейнер alloy-init должен завершиться с кодом 0."
+
+    - name: Дождаться pg_up=1 в Prometheus
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ prometheus_port }}/api/v1/query?query=pg_up"
+        return_content: true
+        timeout: 5
+        use_proxy: false
+      vars:
+        prometheus_port: "{{ (monitoring_config.stdout | from_json).services.prometheus.ports[0].published }}"
+      register: pg_up
+      until: "'1' in (pg_up.json.data.result | default([]) | map(attribute='value') | map('last') | list)"
+      retries: 24
+      delay: 5

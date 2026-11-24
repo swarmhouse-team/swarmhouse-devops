@@ -1,0 +1,11 @@
+---
+# Скопируйте в inventory.yml (файл в .gitignore) и подставьте свои значения.
+# ansible_user — уже существующий администратор с SSH-ключом и sudo.
+# Пароль sudo в репозиторий не кладётся: запрос через --ask-become-pass.
+all:
+  hosts:
+    swarmhouse-vps:
+      ansible_host: 203.0.113.10
+      ansible_port: 22
+      ansible_user: ubuntu
+      ansible_ssh_private_key_file: ~/.ssh/id_ed25519

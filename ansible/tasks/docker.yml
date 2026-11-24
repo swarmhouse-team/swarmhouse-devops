@@ -1,0 +1,58 @@
+---
+- name: Установить зависимости репозитория Docker
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - python3-debian
+    state: present
+
+- name: Создать каталог ключей apt
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Скачать ключ репозитория Docker
+  ansible.builtin.get_url:
+    url: "https://download.docker.com/linux/{{ ansible_facts.distribution | lower }}/gpg"
+    dest: /etc/apt/keyrings/docker.asc
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Подключить репозиторий Docker
+  ansible.builtin.deb822_repository:
+    name: docker
+    types: [deb]
+    uris: ["https://download.docker.com/linux/{{ ansible_facts.distribution | lower }}"]
+    suites: ["{{ ansible_facts.distribution_release }}"]
+    components: [stable]
+    signed_by: /etc/apt/keyrings/docker.asc
+    state: present
+
+- name: Установить Docker Engine и плагины
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    update_cache: true
+
+- name: Включить и запустить Docker
+  ansible.builtin.systemd_service:
+    name: docker
+    enabled: true
+    state: started
+
+- name: Добавить администратора из inventory в группу docker
+  ansible.builtin.user:
+    name: "{{ ansible_user }}"
+    groups: docker
+    append: true
+  when: (ansible_user | default('')) not in ['', 'root', deploy_user]

@@ -1,0 +1,136 @@
+# ============================================================
+# Environment files and secrets
+# ============================================================
+.env
+.env.*
+*.env
+*.env.*
+
+# Commit templates without real credentials
+!.env.example
+!.env.sample
+!.env.template
+!*.env.example
+!*.env.sample
+!*.env.template
+!/ansible/templates/*.env.j2
+
+.envrc
+.pypirc
+
+# Local secret files; keep public templates outside these folders
+/secrets/
+/.ssh/
+/.swarmhouse/
+/ansible/inventory.yml
+/ansible/inventory.ini
+/ansible/inventory.test.yml
+/ansible/*.retry
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+id_ecdsa
+
+# ============================================================
+# Docker bind-mount data
+# ============================================================
+
+# Shared layout: ./data/postgres, ./data/redis, ./data/grafana...
+/data/
+
+# Alternative layout: ./postgres/data, ./monitoring/data...
+**/data/
+
+# Legacy volume directories
+**/postgres-data/
+**/redis-data/
+**/minio-data/
+**/rabbitmq-data/
+**/activemq-data/
+
+# ============================================================
+# Backups and database runtime files
+# ============================================================
+/backups/
+/dumps/
+*.dump
+*.backup
+*.rdb
+*.aof
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.sqlite3-journal
+*.pid
+
+# ============================================================
+# Logs and temporary files
+# ============================================================
+*.log
+*.log.*
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+.cache/
+tmp/
+
+# ============================================================
+# Local Compose overrides
+# ============================================================
+compose.override.yml
+compose.override.yaml
+docker-compose.override.yml
+docker-compose.override.yaml
+
+# ============================================================
+# Editors and operating systems
+# ============================================================
+.idea/
+.vscode/
+/refactor-plan.md
+.DS_Store
+._*
+Thumbs.db
+Desktop.ini
+
+# ============================================================
+# Python helper scripts
+# ============================================================
+__pycache__/
+*.py[cod]
+*$py.class
+
+.venv/
+venv/
+.tox/
+.nox/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+build/
+dist/
+*.egg-info/
+.eggs/
+
+.pdm-python
+.pdm-build/
+__pypackages__/
+
+
+# ============================================================
+# Backup files
+# ============================================================
+/data/backup/
+/data/backup/*.log
+/data/backup/*.lock

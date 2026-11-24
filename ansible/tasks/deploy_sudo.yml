@@ -1,0 +1,21 @@
+---
+# Скрипт лежит вне checkout: CD его не обновляет, только повторный запуск Ansible.
+# Звёздочка в sudoers разрешает любые аргументы, поэтому скрипт сам проверяет SHA.
+- name: Установить скрипт деплоя вне checkout
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../scripts/infra-deploy.sh"
+    dest: /usr/local/sbin/swarmhouse-infra-deploy
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Разрешить deploy только скрипт деплоя
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/swarmhouse-deploy
+    owner: root
+    group: root
+    mode: "0440"
+    content: |
+      Defaults:{{ deploy_user }} !requiretty
+      {{ deploy_user }} ALL=(root) NOPASSWD: /usr/local/sbin/swarmhouse-infra-deploy *
+    validate: /usr/sbin/visudo -cf %s

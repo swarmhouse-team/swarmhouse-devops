@@ -1,0 +1,15 @@
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: swarmhouse-jira
+    receivers:
+      - uid: cg4rl8s277gu8a
+        type: jira
+        settings:
+          api_url: "https://swarmhouse.atlassian.net/rest/api/3"
+          issue_type: Task
+          password: $JIRA_API_TOKEN
+          project: SWARMHOUSE
+          user: $JIRA_USER
+        disableResolveMessage: false

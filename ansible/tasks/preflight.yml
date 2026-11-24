@@ -1,0 +1,11 @@
+---
+- name: Проверить ОС и флаг запуска сервисов
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.distribution_version in supported_os.get(ansible_facts.distribution, [])
+      - deploy_services | string | lower in ['true', 'false', 'yes', 'no', 'on', 'off', '1', '0']
+    fail_msg: >-
+      Поддерживаются Ubuntu {{ supported_os.Ubuntu | join(', ') }}
+      и Debian {{ supported_os.Debian | join(', ') }}.
+      Для deploy_services укажите true или false.
+    quiet: true

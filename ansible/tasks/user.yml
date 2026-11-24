@@ -1,0 +1,9 @@
+---
+- name: Пользователь deploy без дополнительных групп
+  ansible.builtin.user:
+    name: "{{ deploy_user }}"
+    shell: "{{ deploy_shell }}"
+    create_home: true
+    password_lock: true
+    groups: ""
+    append: false
