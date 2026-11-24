@@ -88,6 +88,8 @@ swarmhouse-test:
 
 `ansible_user` — уже существующий администратор, не `deploy`. `ansible_ssh_private_key_file` — его ключ.
 
+Bootstrap добавляет администратора из `ansible_user` в группу `docker`, сохраняя его остальные группы. Группа даёт доступ к Docker с полномочиями root. После bootstrap переподключитесь по SSH и проверьте доступ командой `docker ps`.
+
 Если sudo спрашивает пароль:
 
 ```bash

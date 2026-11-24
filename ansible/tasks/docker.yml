@@ -49,3 +49,10 @@
     name: docker
     enabled: true
     state: started
+
+- name: Добавить администратора из inventory в группу docker
+  ansible.builtin.user:
+    name: "{{ ansible_user }}"
+    groups: docker
+    append: true
+  when: (ansible_user | default('')) not in ['', 'root', deploy_user]
