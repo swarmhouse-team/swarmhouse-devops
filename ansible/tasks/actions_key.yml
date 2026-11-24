@@ -19,10 +19,41 @@
   register: actions_keypair
   no_log: true
 
-- name: Установить публичный ключ Actions для deploy
-  ansible.posix.authorized_key:
-    user: "{{ deploy_user }}"
-    key: "{{ actions_keypair.public_key }}"
-    state: present
-    exclusive: false
+- name: Подготовить системный каталог ключей SSH
+  ansible.builtin.file:
+    path: /etc/ssh/authorized_keys
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Установить обработчик команды SSH
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../scripts/infra-deploy-ssh.sh"
+    dest: /usr/local/sbin/swarmhouse-infra-deploy-ssh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Установить ограниченный ключ Actions
+  ansible.builtin.copy:
+    dest: "/etc/ssh/authorized_keys/{{ deploy_user }}"
+    content: |
+      restrict,command="/usr/local/sbin/swarmhouse-infra-deploy-ssh" {{ actions_keypair.public_key | trim }}
+    owner: root
+    group: root
+    mode: "0644"
   no_log: true
+
+- name: Настроить системный файл ключей для deploy
+  ansible.builtin.blockinfile:
+    path: /etc/ssh/sshd_config
+    insertafter: EOF
+    marker: "# {mark} ANSIBLE MANAGED BLOCK SWARMHOUSE DEPLOY"
+    block: |
+      Match User {{ deploy_user }}
+          AuthorizedKeysFile /etc/ssh/authorized_keys/%u
+          AuthorizedKeysCommand none
+          AuthenticationMethods publickey
+    validate: /usr/sbin/sshd -t -f %s
+  notify: Перечитать конфигурацию SSH

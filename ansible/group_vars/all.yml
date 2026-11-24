@@ -1,6 +1,5 @@
 ---
 deploy_user: deploy
-deploy_group: deploy
 deploy_shell: /bin/bash
 
 devops_root: /opt/swarmhouse
@@ -22,8 +21,11 @@ supported_os:
   Ubuntu:
     - "22.04"
     - "24.04"
+    - "26.04"
+    - "26.10"
   Debian:
     - "12"
+    - "13"
 
 # Несекретные значения из env/postgres.env.example. Пароли сюда не входят.
 # Пример — единственный источник имени базы, пользователя и аргументов initdb.

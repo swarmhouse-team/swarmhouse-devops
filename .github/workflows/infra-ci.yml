@@ -36,8 +36,9 @@ jobs:
         run: |
           set -euo pipefail
           bash -n scripts/infra-deploy.sh
+          sh -n scripts/infra-deploy-ssh.sh
           if command -v shellcheck >/dev/null 2>&1; then
-            shellcheck scripts/infra-deploy.sh
+            shellcheck scripts/infra-deploy.sh scripts/infra-deploy-ssh.sh
           fi
 
       - name: Check Docker Compose

@@ -13,6 +13,11 @@
       prompt: JIRA_API_TOKEN (можно оставить пустым)
       private: true
       default: ""
+  handlers:
+    - name: Перечитать конфигурацию SSH
+      ansible.builtin.systemd_service:
+        name: ssh
+        state: reloaded
   tasks:
     - name: Предварительные проверки
       ansible.builtin.import_tasks: tasks/preflight.yml
@@ -29,14 +34,17 @@
     - name: Каталоги
       ansible.builtin.import_tasks: tasks/directories.yml
 
-    - name: Ключ GitHub Actions
-      ansible.builtin.import_tasks: tasks/actions_key.yml
-
     - name: Checkout swarmhouse-devops
       ansible.builtin.import_tasks: tasks/checkout.yml
 
     - name: Скрипт деплоя и sudo
       ansible.builtin.import_tasks: tasks/deploy_sudo.yml
+
+    - name: Ключ GitHub Actions
+      ansible.builtin.import_tasks: tasks/actions_key.yml
+
+    - name: Применить конфигурацию SSH
+      ansible.builtin.meta: flush_handlers
 
     - name: Env и секреты
       ansible.builtin.import_tasks: tasks/env.yml

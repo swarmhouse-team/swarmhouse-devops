@@ -2,7 +2,7 @@
 
 Команды выполняются из корня репозитория. CD выкладывает этот каталог в `/opt/swarmhouse/swarmhouse-devops`: сначала `docker-compose.yml`, затем `docker-compose.monitoring.yml`.
 
-GitHub Actions входит по SSH как `deploy` и запускает только `sudo -n /usr/local/sbin/swarmhouse-infra-deploy <SHA>`. Скрипт работает от root: `git fetch`, checkout и `docker compose`. Пользователь `deploy` не в группе `docker`. Checkout, env и cron бэкапа принадлежат root.
+GitHub Actions берёт параметры из Environment `production` и передаёт по SSH только SHA коммита. Принудительная команда ключа `deploy` проверяет SHA и запускает скрипт деплоя через sudo. Скрипт от root обновляет checkout и запускает Compose. Checkout, env и cron бэкапа принадлежат root.
 
 `scripts/infra-deploy.sh` на сервер копирует Ansible. CD этот файл не обновляет: правка скрипта попадает на VPS только после повторного запуска playbook.
 

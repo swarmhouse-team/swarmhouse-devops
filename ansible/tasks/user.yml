@@ -7,11 +7,3 @@
     password_lock: true
     groups: ""
     append: false
-
-- name: Каталог SSH пользователя deploy
-  ansible.builtin.file:
-    path: "/home/{{ deploy_user }}/.ssh"
-    state: directory
-    owner: "{{ deploy_user }}"
-    group: "{{ deploy_group }}"
-    mode: "0700"
