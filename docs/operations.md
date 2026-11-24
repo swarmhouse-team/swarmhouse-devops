@@ -26,7 +26,7 @@ GitHub Actions берёт параметры из Environment `production` и п
 | `grafana` | 0.5 | 512m |
 | `loki` | 0.5 | 512m |
 | `alloy` | 0.25 | 256m |
-| `cadvisor` | 0.25 | 256m |
+| `cadvisor` | 1 | 256m |
 | `node-exporter` | 0.25 | 128m |
 | `postgres-exporter` | 0.25 | 128m |
 | `redis-exporter` | 0.25 | 128m |
