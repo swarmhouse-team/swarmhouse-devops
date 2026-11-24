@@ -1,88 +1,11 @@
 ---
-- name: Найти исполняемый файл Docker
-  ansible.builtin.command:
-    argv:
-      - /usr/bin/which
-      - docker
-  register: docker_which
-  changed_when: false
-  failed_when: docker_which.rc not in [0, 1]
-
-- name: Отметить, нужно ли ставить Docker
-  ansible.builtin.set_fact:
-    docker_needs_install: "{{ docker_which.rc == 1 }}"
-
-- name: Проверить версию клиента Docker
-  ansible.builtin.command:
-    argv:
-      - "{{ docker_which.stdout }}"
-      - --version
-  register: docker_client
-  changed_when: false
-  failed_when: false
-  when: not (docker_needs_install | bool)
-
-- name: Остановить, если Docker найден, но клиент не отвечает
-  ansible.builtin.fail:
-    msg: >-
-      Найден {{ docker_which.stdout }}, но `docker --version`
-      завершился с кодом {{ docker_client.rc | default('нет') }}.
-      Пакеты Docker не меняю и официальный репозиторий не подключаю.
-  when:
-    - not (docker_needs_install | bool)
-    - docker_client is not skipped
-    - docker_client.rc | default(1) != 0
-
-- name: Проверить Docker Compose plugin
-  ansible.builtin.command:
-    argv:
-      - "{{ docker_which.stdout }}"
-      - compose
-      - version
-  register: docker_compose_version
-  changed_when: false
-  when:
-    - not (docker_needs_install | bool)
-    - docker_client is not skipped
-    - docker_client.rc | default(1) == 0
-  failed_when: >-
-    docker_compose_version.rc != 0 and not (
-      'is not a docker command' in (
-        (docker_compose_version.stdout | default(''))
-        ~ (docker_compose_version.stderr | default(''))
-      )
-      or 'unknown command' in (
-        (docker_compose_version.stdout | default(''))
-        ~ (docker_compose_version.stderr | default(''))
-      )
-    )
-
-- name: Остановить установку, если Docker есть, а Compose plugin нет
-  ansible.builtin.fail:
-    msg: >-
-      Docker уже установлен ({{ docker_which.stdout }}), но `docker compose version`
-      не выполняется. Официальный репозиторий Docker не подключаю
-      и пакеты Docker не переустанавливаю.
-      Поставьте docker-compose-plugin из того же источника, что и текущий Docker,
-      либо уберите конфликтующую установку вручную.
-  when:
-    - not (docker_needs_install | bool)
-    - docker_compose_version is not skipped
-    - docker_compose_version.rc | default(0) != 0
-
-- name: Отметить уже установленный Docker
-  ansible.builtin.set_fact:
-    docker_installed_by_bootstrap: false
-  when:
-    - not (docker_needs_install | bool)
-    - docker_compose_version is not skipped
-    - docker_compose_version.rc | default(1) == 0
-
-- name: Узнать архитектуру dpkg
-  ansible.builtin.command: dpkg --print-architecture
-  register: dpkg_arch
-  changed_when: false
-  when: docker_needs_install | bool
+- name: Установить зависимости репозитория Docker
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - python3-debian
+    state: present
 
 - name: Создать каталог ключей apt
   ansible.builtin.file:
@@ -91,77 +14,26 @@
     owner: root
     group: root
     mode: "0755"
-  when: docker_needs_install | bool
 
-- name: Скачать GPG-ключ официального репозитория Docker
+- name: Скачать ключ репозитория Docker
   ansible.builtin.get_url:
-    url: "https://download.docker.com/linux/{{ ansible_facts['distribution'] | lower }}/gpg"
+    url: "https://download.docker.com/linux/{{ ansible_facts.distribution | lower }}/gpg"
     dest: /etc/apt/keyrings/docker.asc
     owner: root
     group: root
     mode: "0644"
-  when: docker_needs_install | bool
 
-- name: Поставить python3-debian для модуля deb822_repository
-  ansible.builtin.apt:
-    name: python3-debian
-    state: present
-    update_cache: true
-  when: docker_needs_install | bool
-
-- name: Прочитать прежнюю запись playbook docker.list
-  ansible.builtin.slurp:
-    src: /etc/apt/sources.list.d/docker.list
-  register: docker_list_old
-  failed_when: false
-  when: docker_needs_install | bool
-
-- name: Распознать прежнюю запись playbook docker.list
-  ansible.builtin.set_fact:
-    docker_list_is_playbook: >-
-      {{
-        docker_list_old.content is defined
-        and 'download.docker.com' in (docker_list_old.content | b64decode)
-        and 'docker.asc' in (docker_list_old.content | b64decode)
-      }}
-  when: docker_needs_install | bool
-
-- name: Остановить, если docker.list не является записью этого playbook
-  ansible.builtin.fail:
-    msg: >-
-      /etc/apt/sources.list.d/docker.list уже есть, но в нём нет
-      download.docker.com и signed-by на /etc/apt/keyrings/docker.asc.
-      Чужой источник не удаляю и второй репозиторий Docker не добавляю.
-  when:
-    - docker_needs_install | bool
-    - docker_list_old.content is defined
-    - not (docker_list_is_playbook | default(false) | bool)
-
-- name: Убрать прежнюю запись playbook docker.list
-  ansible.builtin.file:
-    path: /etc/apt/sources.list.d/docker.list
-    state: absent
-  when:
-    - docker_needs_install | bool
-    - docker_list_is_playbook | default(false) | bool
-
-- name: Подключить официальный репозиторий Docker в формате deb822
+- name: Подключить репозиторий Docker
   ansible.builtin.deb822_repository:
     name: docker
     types: [deb]
-    uris:
-      - "https://download.docker.com/linux/{{ ansible_facts['distribution'] | lower }}"
-    suites:
-      - "{{ ansible_facts['distribution_release'] }}"
+    uris: ["https://download.docker.com/linux/{{ ansible_facts.distribution | lower }}"]
+    suites: ["{{ ansible_facts.distribution_release }}"]
     components: [stable]
-    architectures:
-      - "{{ dpkg_arch.stdout }}"
     signed_by: /etc/apt/keyrings/docker.asc
-    enabled: true
     state: present
-  when: docker_needs_install | bool
 
-- name: Установить Docker Engine и Compose plugin
+- name: Установить Docker Engine и плагины
   ansible.builtin.apt:
     name:
       - docker-ce
@@ -171,23 +43,9 @@
       - docker-compose-plugin
     state: present
     update_cache: true
-  when: docker_needs_install | bool
 
-- name: Отметить установку Docker этим playbook
-  ansible.builtin.set_fact:
-    docker_installed_by_bootstrap: true
-  when: docker_needs_install | bool
-
-- name: Включить и запустить сервис Docker
-  ansible.builtin.systemd:
+- name: Включить и запустить Docker
+  ansible.builtin.systemd_service:
     name: docker
     enabled: true
     state: started
-
-- name: Проверить, что демон Docker отвечает
-  ansible.builtin.command: docker info
-  changed_when: false
-
-- name: Повторно проверить Compose plugin
-  ansible.builtin.command: docker compose version
-  changed_when: false

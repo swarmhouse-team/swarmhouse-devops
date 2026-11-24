@@ -1,118 +1,16 @@
 ---
-- name: Проверить каталог checkout
-  ansible.builtin.stat:
-    path: "{{ devops_checkout }}"
-  register: checkout_stat
-
-- name: Остановить, если checkout существует и принадлежит не root
-  ansible.builtin.fail:
-    msg: >-
-      {{ devops_checkout }} принадлежит {{ checkout_stat.stat.pw_name }},
-      а не root. Владельца не меняю и checkout не перезаписываю.
-  when:
-    - checkout_stat.stat.exists
-    - checkout_stat.stat.pw_name != 'root'
-
-- name: Остановить, если вместо checkout лежит файл
-  ansible.builtin.fail:
-    msg: "{{ devops_checkout }} существует и это не каталог."
-  when:
-    - checkout_stat.stat.exists
-    - not checkout_stat.stat.isdir
-
-- name: Создать пустой каталог checkout
+- name: Подготовить каталог checkout
   ansible.builtin.file:
     path: "{{ devops_checkout }}"
     state: directory
     owner: root
     group: root
     mode: "0755"
-  when: not checkout_stat.stat.exists
 
-- name: Клонировать swarmhouse-devops по HTTPS
+- name: Клонировать swarmhouse-devops
   ansible.builtin.git:
     repo: "{{ devops_repo_url }}"
     dest: "{{ devops_checkout }}"
     version: "{{ devops_git_version }}"
     update: false
-    accept_newhostkey: false
-  when: not checkout_stat.stat.exists
-
-- name: Прочитать origin
-  ansible.builtin.command: git remote get-url origin
-  args:
-    chdir: "{{ devops_checkout }}"
-  register: checkout_origin
-  changed_when: false
-
-- name: Проверить, что origin — этот репозиторий
-  ansible.builtin.assert:
-    that:
-      - checkout_origin.stdout | regex_replace('\\.git$', '') | regex_replace('git@github.com:', 'https://github.com/') | regex_replace('ssh://git@github.com/', 'https://github.com/') | lower
-        == devops_repo_url | regex_replace('\\.git$', '') | lower
-    fail_msg: >-
-      origin checkout {{ checkout_origin.stdout }} не совпадает с {{ devops_repo_url }}.
-      Каталог не обновляю.
-    quiet: true
-
-- name: Проверить чистое рабочее дерево
-  ansible.builtin.command: git status --porcelain --untracked-files=no
-  args:
-    chdir: "{{ devops_checkout }}"
-  register: checkout_dirty
-  changed_when: false
-
-- name: Остановить при локальных изменениях checkout
-  ansible.builtin.fail:
-    msg: >-
-      В {{ devops_checkout }} есть изменения отслеживаемых файлов.
-      reset, clean и stash не выполняю. Приведите дерево в порядок вручную
-      и повторите bootstrap.
-  when: checkout_dirty.stdout | length > 0
-
-- name: Сравнить HEAD с ожидаемой версией
-  ansible.builtin.command:
-    argv:
-      - git
-      - -C
-      - "{{ devops_checkout }}"
-      - rev-parse
-      - "{{ item }}"
-  loop:
-    - HEAD
-    - "{{ devops_git_version }}^{commit}"
-  register: checkout_revs
-  changed_when: false
-  failed_when: false
-
-- name: Сравнить текущий HEAD с запрошенным ref
-  ansible.builtin.set_fact:
-    checkout_existed: "{{ checkout_stat.stat.exists }}"
-    checkout_matches: >-
-      {{
-        checkout_revs.results[1].rc == 0
-        and checkout_revs.results[0].rc == 0
-        and checkout_revs.results[0].stdout == checkout_revs.results[1].stdout
-      }}
-
-- name: Остановить, если новый клон не на запрошенном ref
-  ansible.builtin.fail:
-    msg: >-
-      Клон {{ devops_checkout }} не оказался на {{ devops_git_version }}.
-      Ref должен быть запушен в GitHub. Каталог дальше не переключаю.
-  when:
-    - not (checkout_existed | bool)
-    - not (checkout_matches | bool)
-
-- name: Остановить, если существующий checkout не на запрошенной версии
-  ansible.builtin.fail:
-    msg: >-
-      Checkout {{ devops_checkout }} не на {{ devops_git_version }}.
-      Существующий каталог не переключаю. Env и секреты не менялись.
-  when:
-    - checkout_existed | bool
-    - not (checkout_matches | bool)
-
-- name: Запомнить, клонировали ли репозиторий сейчас
-  ansible.builtin.set_fact:
-    checkout_created: "{{ not checkout_stat.stat.exists }}"
+    force: false
