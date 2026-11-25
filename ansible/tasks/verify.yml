@@ -12,14 +12,15 @@
   register: deploy_sudo
   changed_when: false
 
-- name: sudo deploy разрешён только для скрипта деплоя
+- name: sudo deploy разрешён только для двух скриптов выкладки
   ansible.builtin.assert:
     that:
-      - deploy_sudo_rules | length == 1
-      - deploy_sudo_rules[0] is match('^[(]root[)]\s+NOPASSWD:\s*/usr/local/sbin/swarmhouse-infra-deploy\s+[*]$')
+      - deploy_sudo_rules | length == 2
+      - deploy_sudo_rules | select('match', '^[(]root[)]\s+NOPASSWD:\s*/usr/local/sbin/swarmhouse-infra-deploy\s+[*]$') | list | length == 1
+      - deploy_sudo_rules | select('match', '^[(]root[)]\s+NOPASSWD:\s*/usr/local/sbin/swarmhouse-app-deploy\s+[*]$') | list | length == 1
     fail_msg: >-
-      sudo -l для {{ deploy_user }} должен содержать ровно одно правило:
-      NOPASSWD /usr/local/sbin/swarmhouse-infra-deploy. Найдено: {{ deploy_sudo_rules }}
+      sudo -l для {{ deploy_user }} должен разрешать только swarmhouse-infra-deploy и
+      swarmhouse-app-deploy. Найдено: {{ deploy_sudo_rules }}
     quiet: true
   vars:
     deploy_sudo_rules: >-

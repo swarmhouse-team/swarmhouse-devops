@@ -19,6 +19,18 @@
   register: actions_keypair
   no_log: true
 
+- name: Подготовить отдельную пару ключей Actions приложения
+  community.crypto.openssh_keypair:
+    path: "{{ local_vps_dir }}/github-actions/app_id_ed25519"
+    type: ed25519
+    comment: github-actions@swarmhouse-app
+    mode: "0600"
+    regenerate: fail
+  delegate_to: localhost
+  become: false
+  register: app_actions_keypair
+  no_log: true
+
 - name: Подготовить системный каталог ключей SSH
   ansible.builtin.file:
     path: /etc/ssh/authorized_keys
@@ -27,19 +39,23 @@
     group: root
     mode: "0755"
 
-- name: Установить обработчик команды SSH
+- name: Установить обработчики команд SSH
   ansible.builtin.copy:
-    src: "{{ playbook_dir }}/../scripts/infra-deploy-ssh.sh"
-    dest: /usr/local/sbin/swarmhouse-infra-deploy-ssh
+    src: "{{ playbook_dir }}/../scripts/{{ item }}.sh"
+    dest: "/usr/local/sbin/swarmhouse-{{ item }}"
     owner: root
     group: root
     mode: "0755"
+  loop:
+    - infra-deploy-ssh
+    - app-deploy-ssh
 
-- name: Установить ограниченный ключ Actions
+- name: Установить ограниченные ключи Actions
   ansible.builtin.copy:
     dest: "/etc/ssh/authorized_keys/{{ deploy_user }}"
     content: |
       restrict,command="/usr/local/sbin/swarmhouse-infra-deploy-ssh" {{ actions_keypair.public_key | trim }}
+      restrict,command="/usr/local/sbin/swarmhouse-app-deploy-ssh" {{ app_actions_keypair.public_key | trim }}
     owner: root
     group: root
     mode: "0644"

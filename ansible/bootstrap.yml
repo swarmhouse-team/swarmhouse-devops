@@ -55,6 +55,10 @@
     - name: Бэкап PostgreSQL
       ansible.builtin.import_tasks: tasks/backup.yml
 
+    - name: Запуск приложения
+      ansible.builtin.import_tasks: tasks/application.yml
+      when: deploy_services | bool and deploy_application | bool
+
     - name: Проверить права deploy
       ansible.builtin.import_tasks: tasks/verify.yml
 
@@ -62,6 +66,7 @@
       ansible.builtin.debug:
         msg:
           - "DEPLOY_SSH_KEY: содержимое {{ local_vps_dir }}/github-actions/id_ed25519"
+          - "APP_DEPLOY_SSH_KEY: содержимое {{ local_vps_dir }}/github-actions/app_id_ed25519"
           - "DEPLOY_KNOWN_HOSTS: проверенный ключ хоста SSH"
           - "DEPLOY_HOST: {{ ansible_host | default(inventory_hostname) }}"
           - "DEPLOY_USER: {{ deploy_user }}"

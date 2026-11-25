@@ -40,6 +40,11 @@ grafana_bind_port: 3000
 # Запуск контейнеров только при -e deploy_services=true.
 # down, удаление volumes, pull always и force-recreate playbook не делает.
 deploy_services: false
+deploy_application: false
+app_dir: "{{ devops_root }}/swarmhouse-project"
+app_state_dir: "{{ devops_secrets }}/application"
+app_http_port: 8080
+app_socket_origins: ""
 deploy_wait_timeout: 120
 # UID/GID из плана. Локальный Docker Engine был недоступен при проверке образов.
 data_dirs:

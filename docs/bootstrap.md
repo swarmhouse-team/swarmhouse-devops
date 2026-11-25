@@ -15,7 +15,7 @@ Ansible запускается с Linux. На Windows это WSL. Пара кл�
 
 Если в образе VPS уже есть Docker, удалите его до запуска bootstrap.
 
-Пользователь `deploy` создаётся без пароля и без группы `docker`. Доступ к сокету Docker равен root, поэтому группы `docker` у него нет. `sudo` без пароля разрешён только для `/usr/local/sbin/swarmhouse-infra-deploy`. Других команд sudo нет.
+Пользователь `deploy` создаётся без пароля и без группы `docker`. `sudo` без пароля разрешён для двух команд выкладки: `/usr/local/sbin/swarmhouse-infra-deploy` и `/usr/local/sbin/swarmhouse-app-deploy`. Приложение и инфраструктура используют отдельные SSH-ключи с фиксированными обработчиками.
 
 Checkout `/opt/swarmhouse/swarmhouse-devops`, каталог env и cron бэкапа принадлежат root. Иначе `deploy` мог бы подменить compose или env, а скрипт применил бы их от root. Ansible копирует `scripts/infra-deploy.sh` в `/usr/local/sbin/swarmhouse-infra-deploy`. Правка скрипта попадает на сервер только после повторного запуска Ansible: CD сам root-скрипт не обновляет.
 
