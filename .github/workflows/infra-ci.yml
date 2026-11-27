@@ -37,6 +37,8 @@ jobs:
           set -euo pipefail
           bash -n scripts/infra-deploy.sh
           sh -n scripts/infra-deploy-ssh.sh
+          bash -n scripts/app-bootstrap.sh
+          bash -n scripts/app-deploy-ssh.sh
           if command -v shellcheck >/dev/null 2>&1; then
             shellcheck scripts/infra-deploy.sh scripts/infra-deploy-ssh.sh
           fi
@@ -77,6 +79,16 @@ jobs:
         run: |
           docker compose --env-file .env -f docker-compose.yml config --quiet
           docker compose --env-file .env -f docker-compose.monitoring.yml config --quiet
+          APP_VERSION=v1.0.0 DATABASE_URL=postgresql://test:test@postgres/test \
+            REDIS_URL=redis://redis JWT_ACCESS_SECRET=ci-smoke \
+            docker compose -f docker-compose.application.yml config --quiet
+
+      - name: Validate application Nginx configuration
+        run: |
+          nginx_image="$(APP_VERSION=v1.0.0 DATABASE_URL=postgresql://test:test@postgres/test \
+            REDIS_URL=redis://redis JWT_ACCESS_SECRET=ci-smoke \
+            docker compose -f docker-compose.application.yml config --images nginx)"
+          docker run --rm -v "$PWD/conf/nginx/swarmhouse.conf:/etc/nginx/conf.d/default.conf:ro" "$nginx_image" nginx -t
 
       - name: Check image availability
         run: docker compose --env-file .env -f docker-compose.yml pull

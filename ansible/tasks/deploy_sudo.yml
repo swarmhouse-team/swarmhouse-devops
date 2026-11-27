@@ -3,13 +3,24 @@
 # Звёздочка в sudoers разрешает любые аргументы, поэтому скрипт сам проверяет SHA.
 - name: Установить скрипт деплоя вне checkout
   ansible.builtin.copy:
-    src: "{{ playbook_dir }}/../scripts/infra-deploy.sh"
-    dest: /usr/local/sbin/swarmhouse-infra-deploy
+    src: "{{ playbook_dir }}/../scripts/{{ item }}.sh"
+    dest: "/usr/local/sbin/swarmhouse-{{ item }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - infra-deploy
+    - app-bootstrap
+
+- name: Установить команду выкладки приложения
+  ansible.builtin.template:
+    src: app-deploy.sh.j2
+    dest: /usr/local/sbin/swarmhouse-app-deploy
     owner: root
     group: root
     mode: "0755"
 
-- name: Разрешить deploy только скрипт деплоя
+- name: Разрешить deploy только команды выкладки
   ansible.builtin.copy:
     dest: /etc/sudoers.d/swarmhouse-deploy
     owner: root
@@ -18,4 +29,5 @@
     content: |
       Defaults:{{ deploy_user }} !requiretty
       {{ deploy_user }} ALL=(root) NOPASSWD: /usr/local/sbin/swarmhouse-infra-deploy *
+      {{ deploy_user }} ALL=(root) NOPASSWD: /usr/local/sbin/swarmhouse-app-deploy *
     validate: /usr/sbin/visudo -cf %s

@@ -1,0 +1,72 @@
+---
+- name: Подготовить каталог приложения и его состояние
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ app_dir }}", mode: "0750" }
+    - { path: "{{ app_state_dir }}", mode: "0700" }
+
+- name: Установить Compose приложения
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../docker-compose.application.yml"
+    dest: "{{ app_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+
+- name: Проверить наличие env приложения
+  ansible.builtin.stat:
+    path: "{{ app_dir }}/.env"
+  register: app_env
+
+- name: Подготовить env для первого запуска
+  when: not app_env.stat.exists
+  block:
+    - name: Прочитать PostgreSQL и Redis env с сервера
+      ansible.builtin.slurp:
+        src: "{{ devops_env_dir }}/{{ item }}"
+      loop:
+        - postgres.env
+        - redis.env
+      register: app_infra_env
+      no_log: true
+
+    - name: Подготовить локальный каталог для копии JWT-секрета
+      ansible.builtin.file:
+        path: "{{ local_vps_dir }}/passwords"
+        state: directory
+        mode: "0700"
+      delegate_to: localhost
+      become: false
+
+    - name: Создать .env приложения
+      ansible.builtin.template:
+        src: application.env.j2
+        dest: "{{ app_dir }}/.env"
+        owner: root
+        group: root
+        mode: "0600"
+        force: false
+      vars:
+        pg_env: "{{ app_infra_env.results[0].content | b64decode }}"
+        redis_env: "{{ app_infra_env.results[1].content | b64decode }}"
+        app_postgres_user: "{{ pg_env | regex_findall('(?m)^POSTGRES_USER=(.+)$') | first }}"
+        app_postgres_password: "{{ pg_env | regex_findall('(?m)^POSTGRES_PASSWORD=(.+)$') | first }}"
+        app_postgres_db: "{{ pg_env | regex_findall('(?m)^POSTGRES_DB=(.+)$') | first }}"
+        app_redis_password: "{{ redis_env | regex_findall('(?m)^REDIS_PASSWORD=(.+)$') | first }}"
+      no_log: true
+      diff: false
+
+- name: Развернуть первую версию приложения
+  ansible.builtin.command:
+    argv:
+      - /bin/bash
+      - /usr/local/sbin/swarmhouse-app-bootstrap
+      - "{{ app_dir }}"
+      - "{{ app_state_dir }}"
+  register: app_bootstrap
+  changed_when: "'Application bootstrapped at' in app_bootstrap.stdout"
